@@ -57,13 +57,13 @@
     imageTargetSrc: targets.mind;
     autoStart: false;
     uiLoading: no; uiError: no; uiScanning: no;
-    filterMinCF: 0.0001;
-    filterBeta: 1000;
+    filterMinCF: 0.00001;
+    filterBeta: 0.001;
     missTolerance: 20;
     warmupTolerance: 3;
   "
   color-space="sRGB"
-  renderer="colorManagement: true; alpha: true;"
+  renderer="colorManagement: true; alpha: true; physicallyCorrectLights: true;"
   background="transparent: true"
   vr-mode-ui="enabled: false"
   device-orientation-permission-ui="enabled: false"
@@ -75,6 +75,13 @@
   <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
   <a-entity mindar-image-target="targetIndex: 0">
+
+    <!-- Işıklar — her yönden dengeli aydınlatma -->
+    <a-light type="ambient"     color="#ffffff" intensity="3"></a-light>
+    <a-light type="directional" color="#ffffff" intensity="2"  position="1 2 1"></a-light>
+    <a-light type="directional" color="#8aaeff" intensity="1"  position="-1 0 -1"></a-light>
+
+    <!-- Model -->
     <a-entity
       id="obj"
       gltf-model="#model"
@@ -83,7 +90,7 @@
       rotation="90 0 0"
       animation-mixer
     ></a-entity>
-    <a-light type="point" color="#ffffff" intensity="2" position="0 0.3 0.3"></a-light>
+
   </a-entity>
 </a-scene>
 
@@ -123,7 +130,7 @@
     }
   }
 
-  // ── Pinch to scale ───────────────────────────────────
+  // Pinch to scale
   let curScale = 0.12;
   let pinchStartDist = 0;
   let pinchStartScale = 0.12;
@@ -152,7 +159,6 @@
     }
   }, { passive: true });
 
-  // Target olayları
   const target = document.querySelector('[mindar-image-target]');
   target.addEventListener('targetFound', () => { hint.textContent = '✅ 2 parmak = zoom'; });
   target.addEventListener('targetLost',  () => { hint.textContent = '📦 paketi göster · 2 parmak = zoom'; });
