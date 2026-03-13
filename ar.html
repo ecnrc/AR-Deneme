@@ -74,18 +74,22 @@
 
   <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-  <a-entity mindar-image-target="targetIndex: 0">
+  <a-entity id="target" mindar-image-target="targetIndex: 0">
     <a-light type="ambient"     color="#ffffff" intensity="3"></a-light>
     <a-light type="directional" color="#ffffff" intensity="2" position="1 2 1"></a-light>
     <a-light type="directional" color="#8aaeff" intensity="1" position="-1 0 -1"></a-light>
-    <a-entity
-      id="obj"
-      gltf-model="#model"
-      position="0 0 0"
-      scale="0.12 0.12 0.12"
-      rotation="90 0 0"
-      animation-mixer
-    ></a-entity>
+
+    <!-- Smoother wrapper — JS bu entity'i hareket ettirecek -->
+    <a-entity id="smoothWrapper">
+      <a-entity
+        id="obj"
+        gltf-model="#model"
+        position="0 0 0"
+        scale="0.12 0.12 0.12"
+        rotation="90 0 0"
+        animation-mixer
+      ></a-entity>
+    </a-entity>
   </a-entity>
 </a-scene>
 
@@ -95,9 +99,61 @@
   const hint   = document.getElementById('hint');
   const scene  = document.getElementById('scene');
 
+  // ── Smooth bileşeni — lerp ile pozisyon/rotasyon yumuşatma ──
+  AFRAME.registerComponent('smooth-follow', {
+    schema: {
+      lerpPos: { type: 'number', default: 0.15 }, // 0=hiç hareket etme 1=anlık
+      lerpRot: { type: 'number', default: 0.12 },
+      threshold: { type: 'number', default: 0.001 } // bu kadardan küçük hareketi yoksay
+    },
+    init() {
+      this.smoothPos = new THREE.Vector3();
+      this.smoothQuat = new THREE.Quaternion();
+      this.initialized = false;
+    },
+    tick() {
+      const target = this.el.parentEl; // mindar-image-target entity
+      if (!target.object3D.visible) return;
+
+      const rawPos  = target.object3D.position;
+      const rawQuat = target.object3D.quaternion;
+
+      if (!this.initialized) {
+        this.smoothPos.copy(rawPos);
+        this.smoothQuat.copy(rawQuat);
+        this.initialized = true;
+        return;
+      }
+
+      // Pozisyon farkı threshold'dan küçükse hiç hareket etme
+      const dist = this.smoothPos.distanceTo(rawPos);
+      if (dist > this.data.threshold) {
+        this.smoothPos.lerp(rawPos, this.data.lerpPos);
+      }
+
+      // Rotasyon yumuşat
+      this.smoothQuat.slerp(rawQuat, this.data.lerpRot);
+
+      // Smooth değerleri uygula — ama target'ın child'ına değil,
+      // world-space'den local'a çevirerek wrapper'a uygula
+      this.el.object3D.position.copy(this.smoothPos).sub(rawPos);
+      this.el.object3D.quaternion.copy(this.smoothQuat).invert().multiply(rawQuat).invert();
+    }
+  });
+
+  // Smooth wrapper'a bileşeni ekle
+  document.addEventListener('DOMContentLoaded', () => {
+    const wrapper = document.getElementById('smoothWrapper');
+    if (wrapper) wrapper.setAttribute('smooth-follow', '');
+  });
+
   scene.addEventListener('loaded', () => {
     status.textContent = 'Hazır';
     btn.style.display = 'block';
+
+    // Smooth bileşeni scene loaded'dan sonra ekle
+    const wrapper = document.getElementById('smoothWrapper');
+    if (wrapper) wrapper.setAttribute('smooth-follow', 'lerpPos: 0.15; lerpRot: 0.12; threshold: 0.001');
   });
 
   async function startAR() {
@@ -125,13 +181,14 @@
     }
   }
 
+  // Pinch to scale
   let curScale = 0.12;
   let pinchStartDist = 0;
   let pinchStartScale = 0.12;
 
-  function getDist(touches) {
-    const dx = touches[0].clientX - touches[1].clientX;
-    const dy = touches[0].clientY - touches[1].clientY;
+  function getDist(t) {
+    const dx = t[0].clientX - t[1].clientX;
+    const dy = t[0].clientY - t[1].clientY;
     return Math.sqrt(dx*dx + dy*dy);
   }
 
@@ -146,8 +203,7 @@
     if (e.touches.length === 2) {
       const obj = document.getElementById('obj');
       if (!obj) return;
-      const newDist = getDist(e.touches);
-      curScale = Math.max(0.02, Math.min(0.5, pinchStartScale * (newDist / pinchStartDist)));
+      curScale = Math.max(0.02, Math.min(0.5, pinchStartScale * (getDist(e.touches) / pinchStartDist)));
       obj.setAttribute('scale', `${curScale} ${curScale} ${curScale}`);
     }
   }, { passive: true });
