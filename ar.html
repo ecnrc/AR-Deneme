@@ -57,8 +57,8 @@
     imageTargetSrc: targets.mind;
     autoStart: false;
     uiLoading: no; uiError: no; uiScanning: no;
-   filterMinCF: 0.0001;
-filterBeta: 1000;
+    filterMinCF: 0.0001;
+    filterBeta: 1000;
     missTolerance: 20;
     warmupTolerance: 3;
   "
@@ -75,13 +75,9 @@ filterBeta: 1000;
   <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
   <a-entity mindar-image-target="targetIndex: 0">
-
-    <!-- Işıklar — her yönden dengeli aydınlatma -->
     <a-light type="ambient"     color="#ffffff" intensity="3"></a-light>
-    <a-light type="directional" color="#ffffff" intensity="2"  position="1 2 1"></a-light>
-    <a-light type="directional" color="#8aaeff" intensity="1"  position="-1 0 -1"></a-light>
-
-    <!-- Model -->
+    <a-light type="directional" color="#ffffff" intensity="2" position="1 2 1"></a-light>
+    <a-light type="directional" color="#8aaeff" intensity="1" position="-1 0 -1"></a-light>
     <a-entity
       id="obj"
       gltf-model="#model"
@@ -90,7 +86,6 @@ filterBeta: 1000;
       rotation="90 0 0"
       animation-mixer
     ></a-entity>
-
   </a-entity>
 </a-scene>
 
@@ -130,7 +125,6 @@ filterBeta: 1000;
     }
   }
 
-  // Pinch to scale
   let curScale = 0.12;
   let pinchStartDist = 0;
   let pinchStartScale = 0.12;
@@ -153,8 +147,7 @@ filterBeta: 1000;
       const obj = document.getElementById('obj');
       if (!obj) return;
       const newDist = getDist(e.touches);
-      const factor  = newDist / pinchStartDist;
-      curScale = Math.max(0.02, Math.min(0.5, pinchStartScale * factor));
+      curScale = Math.max(0.02, Math.min(0.5, pinchStartScale * (newDist / pinchStartDist)));
       obj.setAttribute('scale', `${curScale} ${curScale} ${curScale}`);
     }
   }, { passive: true });
