@@ -4,231 +4,276 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
   <title>AR Viewer</title>
-  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-    .a-enter-vr, .a-orientation-modal { display: none !important; }
-    video {
-      display: block !important; visibility: visible !important; opacity: 1 !important;
-      position: fixed !important; top: 0 !important; left: 0 !important;
-      width: 100% !important; height: 100% !important;
-      object-fit: cover !important; z-index: 0 !important;
-    }
-    canvas {
-      position: fixed !important; top: 0 !important; left: 0 !important;
-      width: 100% !important; height: 100% !important;
-      z-index: 1 !important; background: transparent !important;
-    }
-    #status {
-      position: fixed; top: 0; left: 0; right: 0;
-      padding: 10px; text-align: center; z-index: 9999;
-      font-family: monospace; font-size: 12px;
-      color: #fff; background: rgba(0,0,0,0.7);
-      transition: opacity 0.5s;
-    }
+    #bgCanvas  { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
+    #threeCanvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; }
     #startBtn {
       position: fixed; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      z-index: 9999; padding: 18px 36px;
+      z-index: 99; padding: 18px 36px;
       background: #fff; color: #000;
       font-family: monospace; font-size: 15px; font-weight: bold;
-      border: none; border-radius: 12px; cursor: pointer; display: none;
+      border: none; border-radius: 12px; cursor: pointer;
+    }
+    #status {
+      position: fixed; top: 0; left: 0; right: 0;
+      padding: 10px; text-align: center; z-index: 99;
+      font-family: monospace; font-size: 12px;
+      color: #fff; background: rgba(0,0,0,0.65);
+      transition: opacity 0.5s; display: none;
     }
     #hint {
-      position: fixed; bottom: 40px; left: 0; right: 0;
-      text-align: center; z-index: 9999;
-      font-family: monospace; font-size: 12px;
-      color: rgba(255,255,255,0.4); display: none;
-      pointer-events: none;
+      position: fixed; bottom: 36px; left: 0; right: 0;
+      text-align: center; z-index: 99; pointer-events: none;
+      font-family: monospace; font-size: 11px;
+      color: rgba(255,255,255,0.35); letter-spacing: 1px;
     }
   </style>
 </head>
 <body>
 
-<div id="status">⏳ Yükleniyor...</div>
-<button id="startBtn" onclick="startAR()">Kamerayı Başlat</button>
-<div id="hint">📦 paketi göster · 2 parmak = zoom</div>
+<canvas id="bgCanvas"></canvas>
+<canvas id="threeCanvas"></canvas>
+<button id="startBtn" onclick="startCamera()">Kamerayı Başlat</button>
+<div id="status"></div>
+<div id="hint">1 parmak = döndür · 2 parmak = zoom · 3 parmak = taşı</div>
 
-<a-scene
-  id="scene"
-  mindar-image="
-    imageTargetSrc: targets.mind;
-    autoStart: false;
-    uiLoading: no; uiError: no; uiScanning: no;
-    filterMinCF: 0.0001;
-    filterBeta: 1000;
-    missTolerance: 20;
-    warmupTolerance: 3;
-  "
-  color-space="sRGB"
-  renderer="colorManagement: true; alpha: true; physicallyCorrectLights: true;"
-  background="transparent: true"
-  vr-mode-ui="enabled: false"
-  device-orientation-permission-ui="enabled: false"
->
-  <a-assets>
-    <a-asset-item id="model" src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"></a-asset-item>
-  </a-assets>
-
-  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
-
-  <a-entity id="targetAnchor" mindar-image-target="targetIndex: 0">
-    <a-light type="ambient"     color="#ffffff" intensity="3"></a-light>
-    <a-light type="directional" color="#ffffff" intensity="2" position="1 2 1"></a-light>
-    <a-light type="directional" color="#8aaeff" intensity="1" position="-1 0 -1"></a-light>
-    <a-entity
-      id="obj"
-      gltf-model="#model"
-      position="0 0 0"
-      scale="0.12 0.12 0.12"
-      rotation="90 0 0"
-      animation-mixer
-    ></a-entity>
-  </a-entity>
-</a-scene>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
 <script>
-  const status = document.getElementById('status');
-  const btn    = document.getElementById('startBtn');
-  const hint   = document.getElementById('hint');
-  const scene  = document.getElementById('scene');
+const bgCanvas    = document.getElementById('bgCanvas');
+const threeCanvas = document.getElementById('threeCanvas');
+const bgCtx       = bgCanvas.getContext('2d');
+const statusEl    = document.getElementById('status');
 
-  // ── Dead zone + lerp smoother ────────────────────────────────
-  // MindAR'ın hesapladığı raw pozisyon/rotasyonu okuyup
-  // kendi smooth değerimizi modele uyguluyoruz
-  AFRAME.registerComponent('stabilizer', {
-    init() {
-      // Anlık smooth hedef
-      this.targetPos  = new THREE.Vector3();
-      this.targetQuat = new THREE.Quaternion();
+function showStatus(msg, color) {
+  statusEl.style.display = 'block';
+  statusEl.style.background = color || 'rgba(0,0,0,0.65)';
+  statusEl.textContent = msg;
+}
 
-      // Şu an modele uygulanmış değerler
-      this.currentPos  = new THREE.Vector3();
-      this.currentQuat = new THREE.Quaternion();
+// ── Kamera ───────────────────────────────────────────────
+const vid = document.createElement('video');
+vid.autoplay = true; vid.playsInline = true; vid.muted = true;
 
-      // Dead zone için son "kabul edilmiş" pozisyon
-      this.acceptedPos  = new THREE.Vector3();
-      this.acceptedQuat = new THREE.Quaternion();
+function startCamera() {
+  document.getElementById('startBtn').style.display = 'none';
+  showStatus('📷 Kamera açılıyor...');
 
-      this.initialized = false;
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+    .then(s => { vid.srcObject = s; vid.play(); showStatus(''); setTimeout(() => statusEl.style.display='none', 1000); })
+    .catch(() => {
+      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        .then(s => { vid.srcObject = s; vid.play(); setTimeout(() => statusEl.style.display='none', 1000); })
+        .catch(e => showStatus('❌ Kamera: ' + e.name, 'rgba(160,0,0,0.85)'));
+    });
+}
 
-      // Ayarlar
-      this.DEAD_ZONE   = 0.015; // bu kadardan az pozisyon değişikliği → yoksay
-      this.ANGLE_ZONE  = 0.008; // bu kadardan az rotasyon değişikliği → yoksay (radyan)
-      this.LERP_POS    = 0.10;  // lerp hızı — düşükçe daha smooth, yavaş
-      this.LERP_ROT    = 0.08;
-    },
+// BG canvas — stretch-free
+(function drawBG() {
+  requestAnimationFrame(drawBG);
+  if (vid.readyState < 2) return;
+  const sw = window.innerWidth, sh = window.innerHeight;
+  const vw = vid.videoWidth,    vh = vid.videoHeight;
+  if (!vw) return;
+  bgCanvas.width = sw; bgCanvas.height = sh;
+  const sc = Math.max(sw/vw, sh/vh);
+  bgCtx.drawImage(vid, (sw-vw*sc)/2, (sh-vh*sc)/2, vw*sc, vh*sc);
+})();
 
-    tick() {
-      const anchor = document.getElementById('targetAnchor');
-      if (!anchor || !anchor.object3D.visible) return;
+// ── Three.js ─────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
+renderer.setClearColor(0x000000, 0);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.shadowMap.enabled = true;
 
-      const rawPos  = anchor.object3D.position;
-      const rawQuat = anchor.object3D.quaternion;
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.01, 100);
+camera.position.set(0, 0, 3);
 
-      if (!this.initialized) {
-        this.targetPos.copy(rawPos);
-        this.targetQuat.copy(rawQuat);
-        this.currentPos.copy(rawPos);
-        this.currentQuat.copy(rawQuat);
-        this.acceptedPos.copy(rawPos);
-        this.acceptedQuat.copy(rawQuat);
-        this.initialized = true;
-        return;
-      }
+// Işıklar
+scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+const key = new THREE.DirectionalLight(0xffffff, 2.0);
+key.position.set(3, 5, 3); key.castShadow = true;
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x8aaeff, 0.8);
+fill.position.set(-3, 0, 2); scene.add(fill);
+const rim = new THREE.DirectionalLight(0xffffff, 0.6);
+rim.position.set(0, -2, -3); scene.add(rim);
 
-      // Pozisyon dead zone kontrolü
-      const posDist = this.acceptedPos.distanceTo(rawPos);
-      if (posDist > this.DEAD_ZONE) {
-        this.targetPos.copy(rawPos);
-        this.acceptedPos.copy(rawPos);
-      }
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
 
-      // Rotasyon dead zone kontrolü
-      const angleDiff = this.acceptedQuat.angleTo(rawQuat);
-      if (angleDiff > this.ANGLE_ZONE) {
-        this.targetQuat.copy(rawQuat);
-        this.acceptedQuat.copy(rawQuat);
-      }
+// ── Model ─────────────────────────────────────────────────
+let model = null, mixer = null;
+let modelPos   = new THREE.Vector3(0, 0, -2);
+let modelScale = 1.0;
+let rotX = 0, rotY = 0;
 
-      // Smooth lerp ile mevcut değere yaklaş
-      this.currentPos.lerp(this.targetPos, this.LERP_POS);
-      this.currentQuat.slerp(this.targetQuat, this.LERP_ROT);
-
-      // Modele uygula
-      const obj = document.getElementById('obj');
-      if (obj) {
-        obj.object3D.parent.position.copy(this.currentPos).sub(rawPos);
-        // Rotasyonu doğrudan model'e değil anchor'ın üstüne uyguluyoruz
-        // Bunun yerine wrapper kullanmak daha temiz olur ama
-        // pozisyon offseti yeterli çoğu durumda
-      }
+const loader = new THREE.GLTFLoader();
+loader.load(
+  'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
+  gltf => {
+    model = gltf.scene;
+    const box    = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const s      = 1.5 / Math.max(size.x, size.y, size.z);
+    model.scale.setScalar(s);
+    model.position.copy(center.multiplyScalar(-s));
+    modelScale = s;
+    scene.add(model);
+    if (gltf.animations.length > 0) {
+      mixer = new THREE.AnimationMixer(model);
+      gltf.animations.forEach(c => mixer.clipAction(c).play());
     }
-  });
+  },
+  null,
+  e => showStatus('❌ Model yüklenemedi: ' + e.message, 'rgba(160,0,0,0.85)')
+);
 
-  scene.addEventListener('loaded', () => {
-    status.textContent = 'Hazır';
-    btn.style.display = 'block';
+// ── Touch kontrolleri ────────────────────────────────────
+// 1 parmak = XY rotasyon
+// 2 parmak = pinch zoom
+// 3 parmak = pozisyon taşı (XY)
 
-    // Stabilizer'ı scene'e bağla (global tick)
-    const cam = document.querySelector('a-camera');
-    cam.setAttribute('stabilizer', '');
-  });
+let touches = [];
+let lastTouches = [];
 
-  async function startAR() {
-    btn.style.display = 'none';
-    status.textContent = '📷 Başlatılıyor...';
-    const sys = scene.systems['mindar-image-system'];
-    try {
-      await sys.start();
-      hint.style.display = 'block';
-      setTimeout(() => {
-        document.querySelectorAll('video').forEach(v => {
-          v.style.cssText = `
-            display:block!important; visibility:visible!important; opacity:1!important;
-            position:fixed!important; top:0!important; left:0!important;
-            width:100%!important; height:100%!important;
-            object-fit:cover!important; z-index:0!important;
-          `;
-        });
-        status.style.opacity = '0';
-        setTimeout(() => status.style.display = 'none', 500);
-      }, 600);
-    } catch(e) {
-      status.textContent = '❌ ' + (e.message || JSON.stringify(e));
-      btn.style.display = 'block';
-    }
+// Pinch
+let pinchStartDist  = 0;
+let pinchStartScale = 1.0;
+
+// Drag (1 parmak)
+let dragStartX = 0, dragStartY = 0;
+let dragStartRotX = 0, dragStartRotY = 0;
+
+// Taşı (3 parmak)
+let moveStartX = 0, moveStartY = 0;
+let moveStartPos = new THREE.Vector3();
+
+function getTouchCenter(ts) {
+  let cx = 0, cy = 0;
+  for (let t of ts) { cx += t.clientX; cy += t.clientY; }
+  return { x: cx/ts.length, y: cy/ts.length };
+}
+
+function getPinchDist(ts) {
+  const dx = ts[0].clientX - ts[1].clientX;
+  const dy = ts[0].clientY - ts[1].clientY;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+threeCanvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  touches = Array.from(e.touches);
+
+  if (touches.length === 1) {
+    dragStartX = touches[0].clientX;
+    dragStartY = touches[0].clientY;
+    dragStartRotX = rotX;
+    dragStartRotY = rotY;
+  } else if (touches.length === 2) {
+    pinchStartDist  = getPinchDist(touches);
+    pinchStartScale = modelScale;
+  } else if (touches.length === 3) {
+    const c = getTouchCenter(touches);
+    moveStartX = c.x; moveStartY = c.y;
+    moveStartPos.copy(modelPos);
   }
+}, { passive: false });
 
-  // Pinch to scale
-  let curScale = 0.12, pinchStartDist = 0, pinchStartScale = 0.12;
-  function getDist(t) {
-    const dx = t[0].clientX - t[1].clientX;
-    const dy = t[0].clientY - t[1].clientY;
-    return Math.sqrt(dx*dx + dy*dy);
+threeCanvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  touches = Array.from(e.touches);
+
+  if (!model) return;
+
+  if (touches.length === 1) {
+    // Döndür
+    const dx = touches[0].clientX - dragStartX;
+    const dy = touches[0].clientY - dragStartY;
+    rotY = dragStartRotY + dx * 0.008;
+    rotX = dragStartRotX + dy * 0.008;
+    rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
+
+  } else if (touches.length === 2) {
+    // Zoom
+    const newDist = getPinchDist(touches);
+    modelScale = Math.max(0.1, Math.min(8, pinchStartScale * (newDist / pinchStartDist)));
+    model.scale.setScalar(modelScale);
+
+  } else if (touches.length === 3) {
+    // Taşı
+    const c = getTouchCenter(touches);
+    const dx = (c.x - moveStartX) / window.innerWidth  *  4;
+    const dy = (c.y - moveStartY) / window.innerHeight * -4;
+    modelPos.set(
+      moveStartPos.x + dx,
+      moveStartPos.y + dy,
+      moveStartPos.z
+    );
   }
-  document.addEventListener('touchstart', e => {
-    if (e.touches.length === 2) { pinchStartDist = getDist(e.touches); pinchStartScale = curScale; }
-  }, { passive: true });
-  document.addEventListener('touchmove', e => {
-    if (e.touches.length === 2) {
-      const obj = document.getElementById('obj');
-      if (!obj) return;
-      curScale = Math.max(0.02, Math.min(0.5, pinchStartScale * (getDist(e.touches) / pinchStartDist)));
-      obj.setAttribute('scale', `${curScale} ${curScale} ${curScale}`);
+}, { passive: false });
+
+threeCanvas.addEventListener('touchend', e => {
+  touches = Array.from(e.touches);
+  // Yeni başlangıç noktalarını güncelle
+  if (touches.length === 1) {
+    dragStartX = touches[0].clientX;
+    dragStartY = touches[0].clientY;
+    dragStartRotX = rotX;
+    dragStartRotY = rotY;
+  }
+}, { passive: false });
+
+// ── Render loop ───────────────────────────────────────────
+const clock = new THREE.Clock();
+(function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  if (model) {
+    model.rotation.x = rotX;
+    model.rotation.y = rotY;
+    // Modelin dünya pozisyonunu güncelle
+    // model.position zaten normalize edilmiş, grup pozisyonu kullanalım
+    model.parent && model.parent !== scene
+      ? model.parent.position.copy(modelPos)
+      : (() => {
+          // model direkt scene'de, position offset'i uygula
+          const box = new THREE.Box3().setFromObject(model);
+          const center = box.getCenter(new THREE.Vector3());
+          // modelPos'u camera space'den world space'e çevir
+          const worldPos = modelPos.clone();
+          worldPos.applyMatrix4(camera.matrixWorld);
+          model.position.set(
+            model.position.x + modelPos.x,
+            model.position.y + modelPos.y,
+            model.position.z
+          );
+        })();
+
+    // Gruplanmış pozisyon için wrapper kullan
+    if (!model.userData.wrapper) {
+      const wrapper = new THREE.Group();
+      scene.remove(model);
+      wrapper.add(model);
+      scene.add(wrapper);
+      model.userData.wrapper = wrapper;
     }
-  }, { passive: true });
-
-  const target = document.querySelector('[mindar-image-target]');
-  target.addEventListener('targetFound', () => { hint.textContent = '✅ 2 parmak = zoom'; });
-  target.addEventListener('targetLost',  () => { hint.textContent = '📦 paketi göster · 2 parmak = zoom'; });
-
-  window.addEventListener('error', e => {
-    status.style.display = 'block'; status.style.opacity = '1';
-    status.textContent = '❌ ' + e.message;
-  });
+    model.userData.wrapper.position.copy(modelPos);
+  }
+  if (mixer) mixer.update(dt);
+  renderer.render(scene, camera);
+})();
 </script>
 </body>
 </html>
