@@ -131,13 +131,18 @@ const fill = new THREE.DirectionalLight(0x8aaeff, 0.8);
 fill.position.set(-3, 0, 2); scene.add(fill);
 
 // Hit test için reticle (yer işareti)
-const reticleGeom = new THREE.RingGeometry(0.08, 0.1, 32).rotateX(-Math.PI/2);
-const reticleMesh = new THREE.Mesh(
-  reticleGeom,
-  new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
-);
+const reticleGeom = new THREE.RingGeometry(0.10, 0.14, 32).rotateX(-Math.PI/2);
+const reticleMat  = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+const reticleMesh = new THREE.Mesh(reticleGeom, reticleMat);
+reticleMesh.matrixAutoUpdate = false;
 reticleMesh.visible = false;
 scene.add(reticleMesh);
+
+// Reticle ortasına nokta
+const dotGeom = new THREE.CircleGeometry(0.015, 16).rotateX(-Math.PI/2);
+const dotMesh = new THREE.Mesh(dotGeom, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }));
+dotMesh.visible = false;
+scene.add(dotMesh);
 
 // Model group — dünya koordinatında sabit
 const modelGroup = new THREE.Group();
@@ -234,7 +239,7 @@ async function startAR() {
   try {
     xrSession = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay', 'light-estimation'],
+      optionalFeatures: ['dom-overlay', 'light-estimation', 'plane-detection', 'anchors'],
       domOverlay: { root: document.body }
     });
 
@@ -247,7 +252,7 @@ async function startAR() {
     document.getElementById('overlay').style.display = 'none';
     document.getElementById('tapBtn').style.display = 'block';
     document.getElementById('exitBtn').style.display = 'block';
-    document.getElementById('reticle').textContent = 'Düz bir yüzeye bak...';
+    document.getElementById('reticle').textContent = '📱 Telefonu yavaşça masanın üzerinde gezdir';
 
     // Render loop başlat
     renderer.setAnimationLoop(onXRFrame);
@@ -268,9 +273,10 @@ function onSessionEnd() {
   document.getElementById('overlay').style.display = 'flex';
   document.getElementById('tapBtn').style.display = 'none';
   document.getElementById('exitBtn').style.display = 'none';
-  document.getElementById('reticle').textContent = 'Yüzey taranıyor...';
+  document.getElementById('reticle').textContent = '📱 Telefonu yavaşça masanın üzerinde gezdir';
   document.getElementById('rotateHint').style.display = 'none';
   reticleMesh.visible = false;
+  dotMesh.visible = false;
   modelGroup.visible = false;
 }
 
@@ -335,17 +341,26 @@ function onXRFrame(timestamp, frame) {
       const pose = hit.getPose(referenceSpace);
       if (pose) {
         reticleMesh.visible = true;
+        dotMesh.visible = true;
         reticleMesh.matrix.fromArray(pose.transform.matrix);
         reticleMesh.matrix.decompose(
           reticleMesh.position,
           reticleMesh.quaternion,
           reticleMesh.scale
         );
+        // Dot'u reticle ile aynı konuma taşı
+        dotMesh.position.copy(reticleMesh.position);
+        dotMesh.quaternion.copy(reticleMesh.quaternion);
+        dotMesh.position.y += 0.001; // z-fighting önle
+        // Nabız animasyonu
+        const pulse = 1 + 0.12 * Math.sin(timestamp * 0.006);
+        reticleMesh.scale.setScalar(pulse);
         document.getElementById('reticle').textContent = '📍 Buraya Yerleştir\'e bas';
       }
     } else {
       reticleMesh.visible = false;
-      document.getElementById('reticle').textContent = 'Düz bir yüzeye bak...';
+      dotMesh.visible = false;
+      document.getElementById('reticle').textContent = '📱 Telefonu yavaşça masanın üzerinde gezdir';
     }
   }
 
