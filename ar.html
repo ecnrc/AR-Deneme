@@ -234,6 +234,7 @@ function showRotateHint() {
 // ── WebXR ─────────────────────────────────────────────────
 let xrSession = null;
 let hitTestSource = null;
+let transientHitTestSource = null;
 let hitTestSourceRequested = false;
 let xrRefSpace = null;
 
@@ -266,7 +267,6 @@ async function startAR() {
 
     // UI güncelle
     document.getElementById('overlay').style.display = 'none';
-    document.getElementById('tapBtn').style.display = 'block';
     document.getElementById('exitBtn').style.display = 'block';
     document.getElementById('reticle').textContent = '📱 Telefonu yavaşça masanın üzerinde gezdir';
 
@@ -283,6 +283,7 @@ async function startAR() {
 
 function onSessionEnd() {
   hitTestSource = null;
+  transientHitTestSource = null;
   hitTestSourceRequested = false;
   placed = false;
   renderer.setAnimationLoop(null);
@@ -300,23 +301,28 @@ function exitAR() {
   if (xrSession) xrSession.end();
 }
 
-function placeModel() {
-  if (!reticleMesh.visible) return;
-  // Modeli reticle'ın konumuna yerleştir
-  modelGroup.position.copy(reticleMesh.position);
-  modelGroup.quaternion.copy(reticleMesh.quaternion);
-  // Önceki rotasyonu sıfırla
+function placeModelAtPos(position, quaternion) {
+  modelGroup.position.copy(position);
+  modelGroup.quaternion.copy(quaternion);
   modelGroup.rotation.x = 0;
   modelGroup.rotation.z = 0;
   modelGroup.visible = true;
   placed = true;
   reticleMesh.visible = false;
+  dotMesh.visible = false;
   document.getElementById('reticle').textContent = '';
   const btn = document.getElementById('tapBtn');
+  btn.style.display = 'block';
   btn.textContent = '🔄 Yeniden Yerleştir';
   btn.classList.add('placed');
   btn.onclick = resetPlace;
   showRotateHint();
+}
+
+// Fallback: center reticle butonu
+function placeModel() {
+  if (!reticleMesh.visible) return;
+  placeModelAtPos(reticleMesh.position, reticleMesh.quaternion);
 }
 
 function resetPlace() {
@@ -326,12 +332,21 @@ function resetPlace() {
   modelGroup.scale.setScalar(1);
   currentScale = 1;
   reticleMesh.visible = false;
-  document.getElementById('reticle').textContent = 'Düz bir yüzeye bak...';
+  dotMesh.visible = false;
   document.getElementById('rotateHint').style.display = 'none';
-  const btn = document.getElementById('tapBtn');
-  btn.textContent = '📍 Buraya Yerleştir';
-  btn.classList.remove('placed');
-  btn.onclick = placeModel;
+  if (transientHitTestSource) {
+    // Tap-to-place modunda buton tekrar gizlenir
+    const btn = document.getElementById('tapBtn');
+    btn.style.display = 'none';
+    document.getElementById('reticle').textContent = '👆 Yerleştirmek istediğin yere dokun';
+  } else {
+    // Fallback: center reticle butonu göster
+    const btn = document.getElementById('tapBtn');
+    btn.textContent = '📍 Buraya Yerleştir';
+    btn.classList.remove('placed');
+    btn.onclick = placeModel;
+    document.getElementById('reticle').textContent = '📱 Telefonu yavaşça masanın üzerinde gezdir';
+  }
 }
 
 // ── XR Frame loop ─────────────────────────────────────────
@@ -343,50 +358,85 @@ function onXRFrame(timestamp, frame) {
 
   // Hit test source oluştur
   if (!hitTestSourceRequested) {
-    session.requestReferenceSpace('viewer').then(refSpace => {
-      session.requestHitTestSource({
-        space: refSpace,
-        entityTypes: ['plane']   // sadece algılanan düzlemler (masa, zemin)
-      }).then(source => {
-        hitTestSource = source;
-      }).catch(() => {
-        // plane desteklenmiyorsa fallback: tüm yüzeyler
-        session.requestHitTestSource({ space: refSpace }).then(s => {
-          hitTestSource = s;
-        });
-      });
-    });
     hitTestSourceRequested = true;
+
+    // 1) Center reticle hit test (görsel rehber)
+    session.requestReferenceSpace('viewer').then(refSpace => {
+      session.requestHitTestSource({ space: refSpace, entityTypes: ['plane'] })
+        .then(s => { hitTestSource = s; })
+        .catch(() => {
+          session.requestHitTestSource({ space: refSpace })
+            .then(s => { hitTestSource = s; });
+        });
+    });
+
+    // 2) Transient (tap-to-place) hit test
+    session.requestHitTestSourceForTransientInput({ profile: 'generic-touchscreen', entityTypes: ['plane'] })
+      .then(s => {
+        transientHitTestSource = s;
+        // Tap modu aktif: buton gizle, talimat güncelle
+        document.getElementById('tapBtn').style.display = 'none';
+        document.getElementById('reticle').textContent = '📱 Telefonu yavaşça masanın üzerinde gezdir';
+      })
+      .catch(() => {
+        session.requestHitTestSourceForTransientInput({ profile: 'generic-touchscreen' })
+          .then(s => {
+            transientHitTestSource = s;
+            document.getElementById('tapBtn').style.display = 'none';
+            document.getElementById('reticle').textContent = '📱 Telefonu yavaşça masanın üzerinde gezdir';
+          })
+          .catch(() => {
+            // Transient desteklenmiyor, fallback: center buton
+            document.getElementById('tapBtn').style.display = 'block';
+          });
+      });
   }
 
-  // Hit test sonuçlarını al
+  // Center reticle güncelle (görsel rehber)
   if (hitTestSource && !placed) {
     const results = frame.getHitTestResults(hitTestSource);
     if (results.length > 0) {
-      const hit  = results[0];
-      const pose = hit.getPose(referenceSpace);
+      const pose = results[0].getPose(referenceSpace);
       if (pose) {
         reticleMesh.visible = true;
         dotMesh.visible = true;
         reticleMesh.matrix.fromArray(pose.transform.matrix);
-        reticleMesh.matrix.decompose(
-          reticleMesh.position,
-          reticleMesh.quaternion,
-          reticleMesh.scale
-        );
-        // Dot'u reticle ile aynı konuma taşı
+        reticleMesh.matrix.decompose(reticleMesh.position, reticleMesh.quaternion, reticleMesh.scale);
         dotMesh.position.copy(reticleMesh.position);
         dotMesh.quaternion.copy(reticleMesh.quaternion);
-        dotMesh.position.y += 0.001; // z-fighting önle
-        // Nabız animasyonu
+        dotMesh.position.y += 0.001;
         const pulse = 1 + 0.12 * Math.sin(timestamp * 0.006);
         reticleMesh.scale.setScalar(pulse);
-        document.getElementById('reticle').textContent = '📍 Buraya Yerleştir\'e bas';
+        // Talimat güncelle
+        if (!transientHitTestSource) {
+          document.getElementById('reticle').textContent = '📍 Buraya Yerleştir\'e bas';
+        } else {
+          document.getElementById('reticle').textContent = '👆 Yerleştirmek istediğin yere dokun';
+        }
       }
     } else {
       reticleMesh.visible = false;
       dotMesh.visible = false;
       document.getElementById('reticle').textContent = '📱 Telefonu yavaşça masanın üzerinde gezdir';
+    }
+  }
+
+  // Tap-to-place: transient input hit test sonuçları
+  if (transientHitTestSource && !placed) {
+    const tResults = frame.getHitTestResultsForTransientInput(transientHitTestSource);
+    for (const r of tResults) {
+      if (r.results.length > 0) {
+        const pose = r.results[0].getPose(referenceSpace);
+        if (pose) {
+          const m = new THREE.Matrix4().fromArray(pose.transform.matrix);
+          const pos = new THREE.Vector3();
+          const quat = new THREE.Quaternion();
+          const scl = new THREE.Vector3();
+          m.decompose(pos, quat, scl);
+          placeModelAtPos(pos, quat);
+          break;
+        }
+      }
     }
   }
 
