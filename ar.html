@@ -171,34 +171,53 @@ loader.load(
 );
 
 // ── Dokunmatik Rotasyon ───────────────────────────────────
-let touchStartX = 0;
-let touchStartY = 0;
-let isTouching  = false;
+let touchStartX   = 0;
+let touchStartY   = 0;
+let isTouching    = false;
+let lastPinchDist = 0;
+let currentScale  = 1;
 let rotateHintTimeout = null;
 
+function getPinchDist(e) {
+  const dx = e.touches[0].clientX - e.touches[1].clientX;
+  const dy = e.touches[0].clientY - e.touches[1].clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
 document.addEventListener('touchstart', e => {
-  if (!placed || e.touches.length !== 1) return;
-  // Butonlara tıklamayı engelleme
+  if (!placed) return;
   if (e.target.closest('button')) return;
-  touchStartX = e.touches[0].clientX;
-  touchStartY = e.touches[0].clientY;
-  isTouching  = true;
+  if (e.touches.length === 1) {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    isTouching  = true;
+  } else if (e.touches.length === 2) {
+    isTouching    = false;
+    lastPinchDist = getPinchDist(e);
+  }
 }, { passive: true });
 
 document.addEventListener('touchmove', e => {
-  if (!placed || !isTouching || e.touches.length !== 1) return;
-  const dx = e.touches[0].clientX - touchStartX;
-  const dy = e.touches[0].clientY - touchStartY;
-
-  // Sadece Y ekseninde (sağa/sola) rotasyon
-  modelGroup.rotation.y += dx * 0.012;
-
-  touchStartX = e.touches[0].clientX;
-  touchStartY = e.touches[0].clientY;
+  if (!placed) return;
+  if (e.touches.length === 1 && isTouching) {
+    // Tek parmak → Y rotasyon
+    const dx = e.touches[0].clientX - touchStartX;
+    modelGroup.rotation.y += dx * 0.012;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  } else if (e.touches.length === 2) {
+    // İki parmak → scale
+    const dist  = getPinchDist(e);
+    const ratio = dist / lastPinchDist;
+    currentScale = Math.max(0.05, Math.min(5, currentScale * ratio));
+    modelGroup.scale.setScalar(currentScale);
+    lastPinchDist = dist;
+  }
 }, { passive: true });
 
-document.addEventListener('touchend', () => {
-  isTouching = false;
+document.addEventListener('touchend', e => {
+  if (e.touches.length < 2) lastPinchDist = 0;
+  if (e.touches.length === 0) isTouching = false;
 }, { passive: true });
 
 function showRotateHint() {
@@ -304,6 +323,8 @@ function resetPlace() {
   placed = false;
   modelGroup.visible = false;
   modelGroup.rotation.set(0, 0, 0);
+  modelGroup.scale.setScalar(1);
+  currentScale = 1;
   reticleMesh.visible = false;
   document.getElementById('reticle').textContent = 'Düz bir yüzeye bak...';
   document.getElementById('rotateHint').style.display = 'none';
