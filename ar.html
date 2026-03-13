@@ -4,120 +4,123 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
   <title>AR Viewer</title>
-
   <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-aframe.prod.js"></script>
-
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-
     .a-enter-vr, .a-orientation-modal { display: none !important; }
 
-    #overlay {
-      position: fixed; inset: 0; z-index: 10;
-      pointer-events: none;
-      display: flex; flex-direction: column;
-      justify-content: space-between;
-    }
-
-    #top {
-      padding: 20px;
-      background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
-      display: flex; justify-content: space-between; align-items: center;
-    }
-
-    .badge {
-      font-family: monospace; font-size: 11px;
-      letter-spacing: 3px; text-transform: uppercase;
-      color: rgba(255,255,255,0.5);
-    }
-    .dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: #ff3b30;
-      animation: blink 1.5s ease infinite;
-    }
-    .dot.found { background: #4cd964; animation: none; }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
-
-    #bottom {
-      padding: 20px 20px 40px;
-      background: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
-      text-align: center;
+    #log {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 9999;
       font-family: monospace; font-size: 12px;
-      color: rgba(255,255,255,0.4); letter-spacing: 1px;
+      color: #fff;
+      max-height: 50vh; overflow-y: auto;
     }
-    #scanTxt  { display: block; }
-    #foundTxt { display: none; color: #4cd964; }
+    .line {
+      padding: 6px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .ok   { background: rgba(0,120,0,0.85); }
+    .err  { background: rgba(180,0,0,0.85); }
+    .info { background: rgba(0,0,0,0.75); }
+    .warn { background: rgba(150,100,0,0.85); }
+
+    #scanTxt {
+      position: fixed; bottom: 40px; left: 0; right: 0;
+      text-align: center; z-index: 20;
+      font-family: monospace; font-size: 13px;
+      color: rgba(255,255,255,0.5);
+      display: none;
+    }
   </style>
 </head>
 <body>
 
-<div id="overlay">
-  <div id="top">
-    <span class="badge">AR · Image Tracking</span>
-    <span class="dot" id="dot"></span>
-  </div>
-  <div id="bottom">
-    <span id="scanTxt">Sigara paketini kameraya göster</span>
-    <span id="foundTxt">✓ Paket algılandı</span>
-  </div>
-</div>
+<div id="log"></div>
+<div id="scanTxt">Sigara paketini kameraya göster</div>
 
 <a-scene
+  id="scene"
   mindar-image="imageTargetSrc: targets.mind; autoStart: true; uiLoading: no; uiError: no; uiScanning: no;"
   color-space="sRGB"
-  renderer="colorManagement: true; physicallyCorrectLights: true;"
+  renderer="colorManagement: true;"
   vr-mode-ui="enabled: false"
   device-orientation-permission-ui="enabled: false"
 >
   <a-assets>
-    <!-- Test için astronot, hazır olunca Test.glb yap -->
     <a-asset-item id="model" src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"></a-asset-item>
   </a-assets>
 
   <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-  <!-- targets.mind içindeki 0. görsele bağlan -->
   <a-entity mindar-image-target="targetIndex: 0">
-
-    <!-- Model sigara paketinin tam üstüne oturur -->
-    <!-- position y değerini modelin yüksekliğine göre ayarla -->
     <a-entity
-      id="obj"
       gltf-model="#model"
       position="0 0.1 0"
       scale="0.08 0.08 0.08"
-      rotation="0 0 0"
       animation-mixer
     ></a-entity>
-
-    <!-- İsteğe bağlı: paketin üstüne ince bir spotlight -->
-    <a-light type="point" intensity="2" position="0 0.5 0" color="#ffffff"></a-light>
   </a-entity>
-
 </a-scene>
 
 <script>
-  const dot      = document.getElementById('dot');
-  const scanTxt  = document.getElementById('scanTxt');
-  const foundTxt = document.getElementById('foundTxt');
+  const logEl = document.getElementById('log');
 
-  // MindAR target bulundu/kayboldu
+  function log(msg, type='info') {
+    const d = document.createElement('div');
+    d.className = 'line ' + type;
+    d.textContent = msg;
+    logEl.prepend(d);
+    console.log(msg);
+  }
+
+  log('Sayfa yüklendi', 'info');
+
+  // HTTPS kontrolü
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+    log('❌ HTTPS değil! Kamera açılmaz.', 'err');
+  } else {
+    log('✅ HTTPS OK: ' + location.origin, 'ok');
+  }
+
+  // targets.mind erişilebilir mi?
+  fetch('targets.mind', { method: 'HEAD' })
+    .then(r => {
+      if (r.ok) log('✅ targets.mind bulundu (HTTP ' + r.status + ')', 'ok');
+      else      log('❌ targets.mind HTTP ' + r.status, 'err');
+    })
+    .catch(e => log('❌ targets.mind fetch hatası: ' + e.message, 'err'));
+
+  // Kamera izni
+  navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+    .then(s => {
+      s.getTracks().forEach(t => t.stop()); // sadece test, MindAR kendi açacak
+      log('✅ Kamera izni tamam', 'ok');
+    })
+    .catch(e => log('❌ Kamera izni: ' + e.name + ' — ' + e.message, 'err'));
+
+  // A-Frame / MindAR olayları
+  const scene = document.getElementById('scene');
+
+  scene.addEventListener('loaded', () => log('✅ A-Frame scene loaded', 'ok'));
+  scene.addEventListener('arReady', () => {
+    log('✅ MindAR hazır — paketi göster', 'ok');
+    document.getElementById('scanTxt').style.display = 'block';
+  });
+  scene.addEventListener('arError', e => log('❌ MindAR hata: ' + JSON.stringify(e.detail), 'err'));
+
   const target = document.querySelector('[mindar-image-target]');
+  target.addEventListener('targetFound', () => log('🎯 Paket algılandı!', 'ok'));
+  target.addEventListener('targetLost',  () => log('👁 Paket kayboldu', 'warn'));
 
-  target.addEventListener('targetFound', () => {
-    dot.classList.add('found');
-    scanTxt.style.display  = 'none';
-    foundTxt.style.display = 'block';
-  });
+  // Model
+  const obj = document.querySelector('[gltf-model]');
+  obj.addEventListener('model-loaded', () => log('✅ Model yüklendi', 'ok'));
+  obj.addEventListener('model-error',  () => log('❌ Model yüklenemedi', 'err'));
 
-  target.addEventListener('targetLost', () => {
-    dot.classList.remove('found');
-    scanTxt.style.display  = 'block';
-    foundTxt.style.display = 'none';
-  });
+  window.addEventListener('error', e => log('❌ JS Hata: ' + e.message, 'err'));
 </script>
-
 </body>
 </html>
