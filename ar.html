@@ -7,100 +7,107 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-    #bgCanvas    { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
-    #threeCanvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; }
+
+    #overlay {
+      position: fixed; inset: 0; z-index: 10;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px; padding: 32px;
+      background: #0a0a0a;
+    }
+    #overlay h1 {
+      font-family: monospace; font-size: 22px; color: #fff;
+      letter-spacing: 2px; text-align: center;
+    }
+    #overlay p {
+      font-family: monospace; font-size: 13px; color: #666;
+      text-align: center; line-height: 1.7; max-width: 300px;
+    }
     #startBtn {
-      position: fixed; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      z-index: 99; padding: 18px 36px;
-      background: #fff; color: #000;
-      font-family: monospace; font-size: 15px; font-weight: bold;
-      border: none; border-radius: 12px; cursor: pointer;
-    }
-    #status {
-      position: fixed; top: 0; left: 0; right: 0;
-      padding: 10px; text-align: center; z-index: 99;
-      font-family: monospace; font-size: 12px;
-      color: #fff; background: rgba(0,0,0,0.65);
-      display: none;
-    }
-    #hint {
-      position: fixed; bottom: 36px; left: 0; right: 0;
-      text-align: center; z-index: 99; pointer-events: none;
-      font-family: monospace; font-size: 11px;
-      color: rgba(255,255,255,0.35); letter-spacing: 1px;
-    }
-    #gyroBtn {
-      position: fixed; top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      z-index: 99; padding: 18px 36px;
-      background: #000; color: #fff; border: 2px solid #fff;
+      padding: 16px 32px; background: #fff; color: #000;
       font-family: monospace; font-size: 14px; font-weight: bold;
-      border-radius: 12px; cursor: pointer; display: none;
+      border: none; border-radius: 10px; cursor: pointer;
+      margin-top: 8px;
+    }
+    #notSupported {
+      display: none;
+      font-family: monospace; font-size: 13px;
+      color: #f55; text-align: center; line-height: 1.7;
+    }
+
+    /* AR UI */
+    #arUI {
+      position: fixed; inset: 0; z-index: 10;
+      pointer-events: none; display: none;
+    }
+    #reticle {
+      position: fixed; bottom: 120px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 11; pointer-events: none;
+      font-family: monospace; font-size: 12px;
+      color: rgba(255,255,255,0.5); letter-spacing: 2px;
+      text-align: center;
+    }
+    #tapBtn {
+      position: fixed; bottom: 40px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 11; pointer-events: auto;
+      padding: 14px 32px; background: rgba(255,255,255,0.15);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff; font-family: monospace; font-size: 13px;
+      border-radius: 30px; cursor: pointer; display: none;
+    }
+    #tapBtn.placed { background: rgba(255,255,255,0.1); font-size: 12px; }
+
+    #exitBtn {
+      position: fixed; top: 20px; right: 20px;
+      z-index: 11; pointer-events: auto;
+      padding: 8px 16px; background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #fff; font-family: monospace; font-size: 11px;
+      border-radius: 8px; cursor: pointer; display: none;
     }
   </style>
 </head>
 <body>
 
-<canvas id="bgCanvas"></canvas>
-<canvas id="threeCanvas"></canvas>
-<button id="startBtn" onclick="init()">Başlat</button>
-<button id="gyroBtn" onclick="requestGyro()">Jiroskop İzni Ver (iOS)</button>
-<div id="status"></div>
-<div id="hint">telefonu hareket ettir · 2 parmak = zoom · 3 parmak = taşı</div>
+<!-- Başlangıç ekranı -->
+<div id="overlay">
+  <h1>AR VİEWER</h1>
+  <p>Modeli gerçek dünyaya yerleştir.<br/>Etrafında serbestçe dolan.</p>
+  <button id="startBtn" onclick="startAR()">AR Başlat</button>
+  <div id="notSupported">
+    Bu cihaz/tarayıcı WebXR AR desteklemiyor.<br/>
+    Android: Chrome kullan<br/>
+    iOS: Safari 15.4+ gerekli
+  </div>
+</div>
+
+<!-- AR aktifken UI -->
+<div id="arUI"></div>
+<div id="reticle">Yüzey taranıyor...</div>
+<button id="tapBtn" onclick="placeModel()">📍 Buraya Yerleştir</button>
+<button id="exitBtn" onclick="exitAR()">✕ Çıkış</button>
+
+<!-- Three.js canvas WebXR tarafından yönetilir -->
+<canvas id="threeCanvas" style="position:fixed;inset:0;z-index:1;"></canvas>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
 <script>
-const bgCanvas    = document.getElementById('bgCanvas');
-const threeCanvas = document.getElementById('threeCanvas');
-const bgCtx       = bgCanvas.getContext('2d');
-const statusEl    = document.getElementById('status');
+const canvas = document.getElementById('threeCanvas');
 
-function showStatus(msg, color, autohide) {
-  statusEl.style.display = 'block';
-  statusEl.style.background = color || 'rgba(0,0,0,0.65)';
-  statusEl.textContent = msg;
-  if (autohide) setTimeout(() => statusEl.style.display = 'none', autohide);
-}
-
-// ── Kamera feed ───────────────────────────────────────────
-const vid = document.createElement('video');
-vid.autoplay = true; vid.playsInline = true; vid.muted = true;
-
-function startCamera() {
-  return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
-    .then(s => { vid.srcObject = s; vid.play(); })
-    .catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-      .then(s => { vid.srcObject = s; vid.play(); }));
-}
-
-(function drawBG() {
-  requestAnimationFrame(drawBG);
-  if (vid.readyState < 2) return;
-  const sw = window.innerWidth, sh = window.innerHeight;
-  const vw = vid.videoWidth,    vh = vid.videoHeight;
-  if (!vw) return;
-  bgCanvas.width = sw; bgCanvas.height = sh;
-  const sc = Math.max(sw/vw, sh/vh);
-  bgCtx.drawImage(vid, (sw-vw*sc)/2, (sh-vh*sc)/2, vw*sc, vh*sc);
-})();
-
-// ── Three.js ─────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
-renderer.setClearColor(0x000000, 0);
+// ── Three.js setup ────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.xr.enabled = true; // WebXR modu
 
 const scene  = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.01, 100);
-
-// Kamera bir wrapper içinde — jiroskop bu wrapper'ı döndürür
-const cameraWrapper = new THREE.Group();
-cameraWrapper.add(camera);
-scene.add(cameraWrapper);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 100);
 
 // Işıklar
 scene.add(new THREE.AmbientLight(0xffffff, 1.5));
@@ -109,63 +116,21 @@ key.position.set(3, 5, 3); scene.add(key);
 const fill = new THREE.DirectionalLight(0x8aaeff, 0.8);
 fill.position.set(-3, 0, 2); scene.add(fill);
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth/window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
-
-// ── Jiroskop ─────────────────────────────────────────────
-let gyroEnabled = false;
-const deviceQuat = new THREE.Quaternion();
-const euler = new THREE.Euler();
-// Telefon yönünü Three.js koordinat sistemine çeviren sabit rotasyon
-const screenTransform = new THREE.Quaternion().setFromEuler(
-  new THREE.Euler(-Math.PI/2, 0, 0)
+// Hit test için reticle (yer işareti)
+const reticleGeom = new THREE.RingGeometry(0.08, 0.1, 32).rotateX(-Math.PI/2);
+const reticleMesh = new THREE.Mesh(
+  reticleGeom,
+  new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide })
 );
+reticleMesh.visible = false;
+scene.add(reticleMesh);
 
-function onDeviceOrientation(e) {
-  if (e.alpha === null) return;
-  // ZXY euler → quaternion
-  euler.set(
-    THREE.MathUtils.degToRad(e.beta),
-    THREE.MathUtils.degToRad(e.alpha),
-    THREE.MathUtils.degToRad(-e.gamma),
-    'YXZ'
-  );
-  deviceQuat.setFromEuler(euler);
-  // Koordinat sistemini düzelt
-  cameraWrapper.quaternion.copy(deviceQuat).multiply(screenTransform);
-  gyroEnabled = true;
-}
-
-function requestGyro() {
-  document.getElementById('gyroBtn').style.display = 'none';
-  // iOS 13+ izin gerektirir
-  if (typeof DeviceOrientationEvent !== 'undefined' &&
-      typeof DeviceOrientationEvent.requestPermission === 'function') {
-    DeviceOrientationEvent.requestPermission()
-      .then(state => {
-        if (state === 'granted') {
-          window.addEventListener('deviceorientation', onDeviceOrientation);
-          showStatus('✅ Jiroskop aktif', 'rgba(0,120,0,0.75)', 2000);
-        } else {
-          showStatus('❌ Jiroskop izni reddedildi', 'rgba(160,0,0,0.85)');
-        }
-      });
-  } else {
-    window.addEventListener('deviceorientation', onDeviceOrientation);
-    showStatus('✅ Jiroskop aktif', 'rgba(0,120,0,0.75)', 2000);
-  }
-}
-
-// ── Model ─────────────────────────────────────────────────
-let model = null, mixer = null;
-// Model dünya koordinatında sabit bir noktada — kamera önünde başlasın
+// Model group — dünya koordinatında sabit
 const modelGroup = new THREE.Group();
-modelGroup.position.set(0, 0, -2); // dünya origin'den 2 birim önde
 scene.add(modelGroup);
+let model = null, mixer = null, placed = false;
 
+// Model yükle
 const loader = new THREE.GLTFLoader();
 loader.load(
   'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
@@ -174,116 +139,159 @@ loader.load(
     const box  = new THREE.Box3().setFromObject(model);
     const cent = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    const s    = 1.5 / Math.max(size.x, size.y, size.z);
+    const s    = 0.4 / Math.max(size.x, size.y, size.z);
     model.scale.setScalar(s);
     model.position.copy(cent.multiplyScalar(-s));
+    modelGroup.visible = false;
     modelGroup.add(model);
     if (gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(model);
       gltf.animations.forEach(c => mixer.clipAction(c).play());
     }
-    showStatus('✅ Hazır — telefonu hareket ettir', 'rgba(0,120,0,0.75)', 3000);
   }
 );
 
-// ── Touch: zoom (2 parmak) + taşı (3 parmak) + döndür (1 parmak) ──
-let pinchStartDist = 0, pinchStartScale = 1.5;
-let curScale = 1.5;
-let moveStart = null;
-let moveStartPos = new THREE.Vector3();
-let dragStart = null;
-let dragStartRot = new THREE.Euler();
+// ── WebXR ─────────────────────────────────────────────────
+let xrSession = null;
+let hitTestSource = null;
+let hitTestSourceRequested = false;
+let xrRefSpace = null;
 
-function getPinchDist(ts) {
-  const dx = ts[0].clientX - ts[1].clientX;
-  const dy = ts[0].clientY - ts[1].clientY;
-  return Math.sqrt(dx*dx + dy*dy);
-}
-function getTouchCenter(ts) {
-  return { x: (ts[0].clientX+ts[1].clientX)/2, y: (ts[0].clientY+ts[1].clientY)/2 };
-}
-
-threeCanvas.addEventListener('touchstart', e => {
-  e.preventDefault();
-  const ts = Array.from(e.touches);
-  if (ts.length === 1) {
-    dragStart = { x: ts[0].clientX, y: ts[0].clientY };
-    dragStartRot.copy(modelGroup.rotation);
-  } else if (ts.length === 2) {
-    pinchStartDist  = getPinchDist(ts);
-    pinchStartScale = curScale;
-    dragStart = null;
-  } else if (ts.length === 3) {
-    const cx = (ts[0].clientX + ts[1].clientX + ts[2].clientX) / 3;
-    const cy = (ts[0].clientY + ts[1].clientY + ts[2].clientY) / 3;
-    moveStart = { x: cx, y: cy };
-    moveStartPos.copy(modelGroup.position);
-    dragStart = null;
+async function startAR() {
+  // WebXR desteği kontrol
+  if (!navigator.xr) {
+    document.getElementById('notSupported').style.display = 'block';
+    document.getElementById('startBtn').style.display = 'none';
+    return;
   }
-}, { passive: false });
 
-threeCanvas.addEventListener('touchmove', e => {
-  e.preventDefault();
-  if (!model) return;
-  const ts = Array.from(e.touches);
-
-  if (ts.length === 1 && dragStart) {
-    const dx = ts[0].clientX - dragStart.x;
-    const dy = ts[0].clientY - dragStart.y;
-    modelGroup.rotation.y = dragStartRot.y + dx * 0.008;
-    modelGroup.rotation.x = dragStartRot.x + dy * 0.008;
-    modelGroup.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, modelGroup.rotation.x));
-
-  } else if (ts.length === 2) {
-    const newDist = getPinchDist(ts);
-    curScale = Math.max(0.2, Math.min(10, pinchStartScale * (newDist / pinchStartDist)));
-    modelGroup.scale.setScalar(curScale / 1.5);
-
-  } else if (ts.length === 3 && moveStart) {
-    const cx = (ts[0].clientX + ts[1].clientX + ts[2].clientX) / 3;
-    const cy = (ts[0].clientY + ts[1].clientY + ts[2].clientY) / 3;
-    const dx = (cx - moveStart.x) / window.innerWidth  * 4;
-    const dy = (cy - moveStart.y) / window.innerHeight * -4;
-    modelGroup.position.set(
-      moveStartPos.x + dx,
-      moveStartPos.y + dy,
-      moveStartPos.z
-    );
+  const supported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+  if (!supported) {
+    document.getElementById('notSupported').style.display = 'block';
+    document.getElementById('startBtn').style.display = 'none';
+    return;
   }
-}, { passive: false });
 
-threeCanvas.addEventListener('touchend', e => {
-  const ts = Array.from(e.touches);
-  if (ts.length === 0) { dragStart = null; moveStart = null; }
-}, { passive: false });
+  try {
+    xrSession = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay', 'light-estimation'],
+      domOverlay: { root: document.body }
+    });
 
-// ── Init ──────────────────────────────────────────────────
-async function init() {
-  document.getElementById('startBtn').style.display = 'none';
-  showStatus('📷 Başlatılıyor...');
+    renderer.xr.setReferenceSpaceType('local');
+    await renderer.xr.setSession(xrSession);
 
-  await startCamera().catch(e => showStatus('❌ Kamera: ' + e.name, 'rgba(160,0,0,0.85)'));
+    xrSession.addEventListener('end', onSessionEnd);
 
-  // iOS mu?
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  if (isIOS && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    document.getElementById('gyroBtn').style.display = 'block';
-    showStatus('iOS: Jiroskop için izin gerekiyor', 'rgba(0,0,0,0.75)');
-  } else {
-    // Android veya desktop — direkt başlat
-    window.addEventListener('deviceorientation', onDeviceOrientation);
-    showStatus('✅ Kamera açık', 'rgba(0,120,0,0.75)', 2000);
+    // UI güncelle
+    document.getElementById('overlay').style.display = 'none';
+    document.getElementById('tapBtn').style.display = 'block';
+    document.getElementById('exitBtn').style.display = 'block';
+    document.getElementById('reticle').textContent = 'Düz bir yüzeye bak...';
+
+    // Render loop başlat
+    renderer.setAnimationLoop(onXRFrame);
+
+  } catch(e) {
+    document.getElementById('notSupported').innerHTML =
+      'AR başlatılamadı:<br>' + e.message + '<br><small>Android Chrome veya iOS Safari 15.4+ gerekli</small>';
+    document.getElementById('notSupported').style.display = 'block';
+    document.getElementById('startBtn').style.display = 'none';
   }
 }
 
-// ── Render ────────────────────────────────────────────────
-const clock = new THREE.Clock();
-(function animate() {
-  requestAnimationFrame(animate);
-  const dt = clock.getDelta();
-  if (mixer) mixer.update(dt);
+function onSessionEnd() {
+  hitTestSource = null;
+  hitTestSourceRequested = false;
+  placed = false;
+  renderer.setAnimationLoop(null);
+  document.getElementById('overlay').style.display = 'flex';
+  document.getElementById('tapBtn').style.display = 'none';
+  document.getElementById('exitBtn').style.display = 'none';
+  document.getElementById('reticle').textContent = 'Yüzey taranıyor...';
+  reticleMesh.visible = false;
+  modelGroup.visible = false;
+}
+
+function exitAR() {
+  if (xrSession) xrSession.end();
+}
+
+function placeModel() {
+  if (!reticleMesh.visible) return;
+  // Modeli reticle'ın konumuna yerleştir
+  modelGroup.position.copy(reticleMesh.position);
+  modelGroup.quaternion.copy(reticleMesh.quaternion);
+  modelGroup.visible = true;
+  placed = true;
+  reticleMesh.visible = false;
+  document.getElementById('reticle').textContent = '';
+  const btn = document.getElementById('tapBtn');
+  btn.textContent = '🔄 Yeniden Yerleştir';
+  btn.classList.add('placed');
+  btn.onclick = resetPlace;
+}
+
+function resetPlace() {
+  placed = false;
+  modelGroup.visible = false;
+  reticleMesh.visible = false;
+  document.getElementById('reticle').textContent = 'Düz bir yüzeye bak...';
+  const btn = document.getElementById('tapBtn');
+  btn.textContent = '📍 Buraya Yerleştir';
+  btn.classList.remove('placed');
+  btn.onclick = placeModel;
+}
+
+// ── XR Frame loop ─────────────────────────────────────────
+function onXRFrame(timestamp, frame) {
+  if (!frame) return;
+
+  const referenceSpace = renderer.xr.getReferenceSpace();
+  const session = renderer.xr.getSession();
+
+  // Hit test source oluştur
+  if (!hitTestSourceRequested) {
+    session.requestReferenceSpace('viewer').then(refSpace => {
+      session.requestHitTestSource({ space: refSpace }).then(source => {
+        hitTestSource = source;
+      });
+    });
+    hitTestSourceRequested = true;
+  }
+
+  // Hit test sonuçlarını al
+  if (hitTestSource && !placed) {
+    const results = frame.getHitTestResults(hitTestSource);
+    if (results.length > 0) {
+      const hit  = results[0];
+      const pose = hit.getPose(referenceSpace);
+      if (pose) {
+        reticleMesh.visible = true;
+        reticleMesh.matrix.fromArray(pose.transform.matrix);
+        reticleMesh.matrix.decompose(
+          reticleMesh.position,
+          reticleMesh.quaternion,
+          reticleMesh.scale
+        );
+        document.getElementById('reticle').textContent = '📍 Buraya Yerleştir\'e bas';
+      }
+    } else {
+      reticleMesh.visible = false;
+      document.getElementById('reticle').textContent = 'Düz bir yüzeye bak...';
+    }
+  }
+
+  if (mixer) mixer.update(0.016);
   renderer.render(scene, camera);
-})();
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
 </script>
 </body>
 </html>
