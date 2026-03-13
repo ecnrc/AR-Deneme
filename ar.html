@@ -8,21 +8,18 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
 
-    /* Kamera — arka plan */
-    #cam {
+    /* Kamera stretch fix — video'yu canvas üzerinden çiz */
+    #bgCanvas {
       position: fixed; inset: 0;
       width: 100%; height: 100%;
-      object-fit: cover;
       z-index: 0;
     }
 
-    /* Three.js canvas — şeffaf, üstte */
+    /* Three.js canvas — üstte, şeffaf */
     #threeCanvas {
       position: fixed; inset: 0;
-      width: 100% !important;
-      height: 100% !important;
+      width: 100%; height: 100%;
       z-index: 1;
-      background: transparent;
     }
 
     #status {
@@ -44,19 +41,23 @@
 </head>
 <body>
 
-<video id="cam" autoplay playsinline muted></video>
+<canvas id="bgCanvas"></canvas>
 <canvas id="threeCanvas"></canvas>
 <div id="status">⏳ Yükleniyor...</div>
 <div id="hud">sürükle = döndür · pinch = zoom</div>
 
-<!-- Three.js -->
-<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
-<script src="https://unpkg.com/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
 <script>
 const status = document.getElementById('status');
 
 // ── Kamera ──────────────────────────────────────────────
+const vid = document.createElement('video');
+vid.autoplay = true;
+vid.playsInline = true;
+vid.muted = true;
+
 function startCamera(simple) {
   const c = simple
     ? { video: true, audio: false }
@@ -64,7 +65,8 @@ function startCamera(simple) {
 
   navigator.mediaDevices.getUserMedia(c)
     .then(stream => {
-      document.getElementById('cam').srcObject = stream;
+      vid.srcObject = stream;
+      vid.play();
       status.textContent = '📷 Kamera açık — model yükleniyor...';
     })
     .catch(err => {
@@ -77,10 +79,39 @@ function startCamera(simple) {
 }
 startCamera(false);
 
-// ── Three.js Setup ───────────────────────────────────────
-const canvas   = document.getElementById('threeCanvas');
-const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-renderer.setClearColor(0x000000, 0);   // tamamen şeffaf
+// ── Kamera feed'i stretch olmadan çiz ───────────────────
+// 2D canvas ile cover mantığını manuel uyguluyoruz
+const bgCanvas = document.getElementById('bgCanvas');
+const bgCtx    = bgCanvas.getContext('2d');
+
+function drawBG() {
+  requestAnimationFrame(drawBG);
+  if (vid.readyState < 2) return;
+
+  const sw = window.innerWidth;
+  const sh = window.innerHeight;
+  bgCanvas.width  = sw;
+  bgCanvas.height = sh;
+
+  const vw = vid.videoWidth;
+  const vh = vid.videoHeight;
+  if (!vw || !vh) return;
+
+  // object-fit: cover mantığı
+  const scale = Math.max(sw / vw, sh / vh);
+  const drawW = vw * scale;
+  const drawH = vh * scale;
+  const ox    = (sw - drawW) / 2;
+  const oy    = (sh - drawH) / 2;
+
+  bgCtx.drawImage(vid, ox, oy, drawW, drawH);
+}
+drawBG();
+
+// ── Three.js ─────────────────────────────────────────────
+const threeCanvas = document.getElementById('threeCanvas');
+const renderer = new THREE.WebGLRenderer({ canvas: threeCanvas, alpha: true, antialias: true });
+renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputEncoding = THREE.sRGBEncoding;
@@ -90,16 +121,14 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 camera.position.set(0, 0, 3);
 
 // Işıklar
-const ambient = new THREE.AmbientLight(0xffffff, 1.2);
-scene.add(ambient);
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-dirLight.position.set(2, 4, 3);
-scene.add(dirLight);
-const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
-fillLight.position.set(-2, -1, -2);
-scene.add(fillLight);
+scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+const dir = new THREE.DirectionalLight(0xffffff, 1.5);
+dir.position.set(2, 4, 3);
+scene.add(dir);
+const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+fill.position.set(-2, -1, -2);
+scene.add(fill);
 
-// Resize
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
@@ -108,31 +137,29 @@ window.addEventListener('resize', () => {
 
 // ── GLB Yükle ────────────────────────────────────────────
 let model = null;
-const loader = new THREE.GLTFLoader();
+let mixer = null;
 
+const loader = new THREE.GLTFLoader();
 loader.load(
   'Test.glb',
   gltf => {
     model = gltf.scene;
 
-    // Modeli ortala ve normalize et
+    // Otomatik boyutlandır
     const box    = new THREE.Box3().setFromObject(model);
     const center = box.getCenter(new THREE.Vector3());
     const size   = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    const scale  = 1.5 / maxDim;  // ekrana sığacak şekilde otomatik scale
+    const s      = 1.8 / maxDim;
 
-    model.scale.setScalar(scale);
-    model.position.sub(center.multiplyScalar(scale));
-    model.position.y -= 0.2;
+    model.scale.setScalar(s);
+    model.position.copy(center.multiplyScalar(-s));
 
     scene.add(model);
 
-    // Animasyonlar varsa çalıştır
-    if (gltf.animations && gltf.animations.length > 0) {
-      const mixer = new THREE.AnimationMixer(model);
+    if (gltf.animations.length > 0) {
+      mixer = new THREE.AnimationMixer(model);
       gltf.animations.forEach(clip => mixer.clipAction(clip).play());
-      window._mixer = mixer;
     }
 
     status.textContent = '✅ Hazır';
@@ -140,77 +167,63 @@ loader.load(
     setTimeout(() => { status.style.opacity = '0'; }, 2500);
   },
   xhr => {
-    const pct = xhr.lengthComputable ? Math.round(xhr.loaded / xhr.total * 100) : '...';
-    status.textContent = `⏳ Model yükleniyor %${pct}`;
+    if (xhr.lengthComputable) {
+      status.textContent = `⏳ Model yükleniyor %${Math.round(xhr.loaded / xhr.total * 100)}`;
+    }
   },
   err => {
-    status.textContent = '❌ Test.glb yüklenemedi: ' + err.message;
+    console.error(err);
+    status.textContent = '❌ Test.glb yüklenemedi';
     status.style.background = 'rgba(180,0,0,0.85)';
   }
 );
 
-// ── Otomatik döndürme ────────────────────────────────────
+// ── Touch ────────────────────────────────────────────────
 let autoRotate = true;
 let rotY = 0;
+let touch = { x: 0, lastRot: 0 };
+let pinch = { dist: 0, lastScale: 1.8 };
+let curScale = 1.8;
 
-// ── Touch kontrolü ───────────────────────────────────────
-let touch = { active: false, x: 0, lastRotY: 0 };
-let pinch = { active: false, dist: 0, lastScale: 1.5 };
-let currentScale = 1.5;
-
-canvas.addEventListener('touchstart', e => {
+threeCanvas.addEventListener('touchstart', e => {
   e.preventDefault();
   autoRotate = false;
-
   if (e.touches.length === 1) {
-    touch.active = true;
-    touch.x = e.touches[0].clientX;
-    touch.lastRotY = rotY;
+    touch.x       = e.touches[0].clientX;
+    touch.lastRot = rotY;
   } else if (e.touches.length === 2) {
-    pinch.active = true;
     const dx = e.touches[0].clientX - e.touches[1].clientX;
     const dy = e.touches[0].clientY - e.touches[1].clientY;
-    pinch.dist = Math.sqrt(dx*dx + dy*dy);
-    pinch.lastScale = currentScale;
+    pinch.dist      = Math.sqrt(dx*dx + dy*dy);
+    pinch.lastScale = curScale;
   }
 }, { passive: false });
 
-canvas.addEventListener('touchmove', e => {
+threeCanvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  if (e.touches.length === 1 && touch.active && model) {
-    const delta = e.touches[0].clientX - touch.x;
-    rotY = touch.lastRotY + delta * 0.008;
-  } else if (e.touches.length === 2 && pinch.active && model) {
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    const newDist = Math.sqrt(dx*dx + dy*dy);
-    const factor  = newDist / pinch.dist;
-    currentScale  = Math.max(0.3, Math.min(5, pinch.lastScale * factor));
-    model.scale.setScalar(currentScale);
+  if (e.touches.length === 1 && model) {
+    rotY = touch.lastRot + (e.touches[0].clientX - touch.x) * 0.008;
+  } else if (e.touches.length === 2 && model) {
+    const dx   = e.touches[0].clientX - e.touches[1].clientX;
+    const dy   = e.touches[0].clientY - e.touches[1].clientY;
+    const nd   = Math.sqrt(dx*dx + dy*dy);
+    curScale   = Math.max(0.3, Math.min(5, pinch.lastScale * (nd / pinch.dist)));
+    model.scale.setScalar(curScale);
   }
 }, { passive: false });
-
-canvas.addEventListener('touchend', () => {
-  touch.active = false;
-  pinch.active = false;
-});
 
 // ── Render Loop ──────────────────────────────────────────
 const clock = new THREE.Clock();
-function animate() {
+(function animate() {
   requestAnimationFrame(animate);
-  const delta = clock.getDelta();
-
+  const dt = clock.getDelta();
   if (model) {
-    if (autoRotate) rotY += delta * 0.4;
+    if (autoRotate) rotY += dt * 0.5;
     model.rotation.y = rotY;
   }
-
-  if (window._mixer) window._mixer.update(delta);
-
+  if (mixer) mixer.update(dt);
   renderer.render(scene, camera);
-}
-animate();
+})();
 </script>
 </body>
 </html>
