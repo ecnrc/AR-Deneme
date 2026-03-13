@@ -10,65 +10,58 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
     .a-enter-vr, .a-orientation-modal { display: none !important; }
-
-    /* MindAR'ın oluşturduğu video ve container'ı zorla göster */
     video {
-      display: block !important;
-      visibility: visible !important;
-      opacity: 1 !important;
-      position: fixed !important;
-      top: 0 !important; left: 0 !important;
+      display: block !important; visibility: visible !important; opacity: 1 !important;
+      position: fixed !important; top: 0 !important; left: 0 !important;
       width: 100% !important; height: 100% !important;
-      object-fit: cover !important;
-      z-index: 0 !important;
+      object-fit: cover !important; z-index: 0 !important;
     }
-    /* MindAR overlay container */
-    .mindar-ui-overlay {
-      display: block !important;
-      visibility: visible !important;
-    }
-    /* A-Frame canvas üstte şeffaf */
     canvas {
-      position: fixed !important;
-      top: 0 !important; left: 0 !important;
+      position: fixed !important; top: 0 !important; left: 0 !important;
       width: 100% !important; height: 100% !important;
-      z-index: 1 !important;
-      background: transparent !important;
+      z-index: 1 !important; background: transparent !important;
     }
-
     #status {
       position: fixed; top: 0; left: 0; right: 0;
       padding: 10px; text-align: center; z-index: 9999;
       font-family: monospace; font-size: 12px;
-      color: #fff; background: rgba(0,0,0,0.75);
+      color: #fff; background: rgba(0,0,0,0.7);
+      transition: opacity 0.5s;
     }
     #startBtn {
       position: fixed; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      z-index: 9999;
-      padding: 18px 36px;
+      z-index: 9999; padding: 18px 36px;
       background: #fff; color: #000;
       font-family: monospace; font-size: 15px; font-weight: bold;
-      border: none; border-radius: 12px; cursor: pointer;
+      border: none; border-radius: 12px; cursor: pointer; display: none;
     }
-    #scanTxt {
+    #hint {
       position: fixed; bottom: 40px; left: 0; right: 0;
       text-align: center; z-index: 9999;
-      font-family: monospace; font-size: 13px;
-      color: rgba(255,255,255,0.6);
-      display: none;
+      font-family: monospace; font-size: 12px;
+      color: rgba(255,255,255,0.4); display: none;
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
 
 <div id="status">⏳ Yükleniyor...</div>
-<button id="startBtn" style="display:none" onclick="startAR()">Kamerayı Başlat</button>
-<div id="scanTxt">📦 Sigara paketini kameraya göster</div>
+<button id="startBtn" onclick="startAR()">Kamerayı Başlat</button>
+<div id="hint">📦 paketi göster · 2 parmak = zoom</div>
 
 <a-scene
   id="scene"
-  mindar-image="imageTargetSrc: targets.mind; autoStart: false; uiLoading: no; uiError: no; uiScanning: no;"
+  mindar-image="
+    imageTargetSrc: targets.mind;
+    autoStart: false;
+    uiLoading: no; uiError: no; uiScanning: no;
+    filterMinCF: 0.0001;
+    filterBeta: 1000;
+    missTolerance: 20;
+    warmupTolerance: 3;
+  "
   color-space="sRGB"
   renderer="colorManagement: true; alpha: true;"
   background="transparent: true"
@@ -83,19 +76,22 @@
 
   <a-entity mindar-image-target="targetIndex: 0">
     <a-entity
+      id="obj"
       gltf-model="#model"
-      position="0 0.1 0"
-      scale="0.08 0.08 0.08"
+      position="0 0 0"
+      scale="0.12 0.12 0.12"
+      rotation="-90 0 0"
       animation-mixer
     ></a-entity>
+    <a-light type="point" color="#ffffff" intensity="2" position="0 0.3 0.3"></a-light>
   </a-entity>
 </a-scene>
 
 <script>
-  const status  = document.getElementById('status');
-  const btn     = document.getElementById('startBtn');
-  const scanTxt = document.getElementById('scanTxt');
-  const scene   = document.getElementById('scene');
+  const status = document.getElementById('status');
+  const btn    = document.getElementById('startBtn');
+  const hint   = document.getElementById('hint');
+  const scene  = document.getElementById('scene');
 
   scene.addEventListener('loaded', () => {
     status.textContent = 'Hazır';
@@ -105,51 +101,65 @@
   async function startAR() {
     btn.style.display = 'none';
     status.textContent = '📷 Başlatılıyor...';
-
-    const mindarSystem = scene.systems['mindar-image-system'];
+    const sys = scene.systems['mindar-image-system'];
     try {
-      await mindarSystem.start();
-      status.textContent = '🎯 AR aktif — paketi göster';
-      scanTxt.style.display = 'block';
-
-      // Başladıktan sonra video elementini bul ve zorla göster
+      await sys.start();
+      hint.style.display = 'block';
       setTimeout(() => {
         document.querySelectorAll('video').forEach(v => {
           v.style.cssText = `
-            display: block !important;
-            visibility: visible !important;
-            opacity: 1 !important;
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            object-fit: cover !important;
-            z-index: 0 !important;
+            display:block!important; visibility:visible!important; opacity:1!important;
+            position:fixed!important; top:0!important; left:0!important;
+            width:100%!important; height:100%!important;
+            object-fit:cover!important; z-index:0!important;
           `;
         });
-        status.style.display = 'none';
-      }, 500);
-
+        status.style.opacity = '0';
+        setTimeout(() => status.style.display = 'none', 500);
+      }, 600);
     } catch(e) {
-      status.textContent = '❌ Hata: ' + (e.message || JSON.stringify(e));
+      status.textContent = '❌ ' + (e.message || JSON.stringify(e));
       btn.style.display = 'block';
     }
   }
 
+  // ── Pinch to scale ───────────────────────────────────
+  let curScale = 0.12;
+  let pinchStartDist = 0;
+  let pinchStartScale = 0.12;
+
+  function getDist(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+
+  document.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      pinchStartDist  = getDist(e.touches);
+      pinchStartScale = curScale;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', e => {
+    if (e.touches.length === 2) {
+      const obj = document.getElementById('obj');
+      if (!obj) return;
+      const newDist = getDist(e.touches);
+      const factor  = newDist / pinchStartDist;
+      curScale = Math.max(0.02, Math.min(0.5, pinchStartScale * factor));
+      obj.setAttribute('scale', `${curScale} ${curScale} ${curScale}`);
+    }
+  }, { passive: true });
+
+  // Target olayları
   const target = document.querySelector('[mindar-image-target]');
-  target.addEventListener('targetFound', () => {
-    status.style.display = 'block';
-    status.textContent = '✅ Paket algılandı!';
-    setTimeout(() => status.style.display = 'none', 1500);
-  });
-  target.addEventListener('targetLost', () => {
-    scanTxt.style.display = 'block';
-  });
+  target.addEventListener('targetFound', () => { hint.textContent = '✅ 2 parmak = zoom'; });
+  target.addEventListener('targetLost',  () => { hint.textContent = '📦 paketi göster · 2 parmak = zoom'; });
 
   window.addEventListener('error', e => {
+    status.style.display = 'block'; status.style.opacity = '1';
     status.textContent = '❌ ' + e.message;
-    status.style.display = 'block';
   });
 </script>
 </body>
