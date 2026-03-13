@@ -9,26 +9,7 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
 
-    #cam {
-      position: fixed; inset: 0;
-      width: 100%; height: 100%;
-      object-fit: cover;
-      z-index: 0;
-    }
-
-    /* A-Frame'in ürettiği her şeyi şeffaf yap */
-    a-scene,
-    a-scene canvas,
-    .a-canvas {
-      position: fixed !important;
-      top: 0 !important; left: 0 !important;
-      width: 100% !important; height: 100% !important;
-      z-index: 1 !important;
-      background: transparent !important;
-      background-color: transparent !important;
-    }
-
-    /* A-Frame'in inject ettiği default UI'ları gizle */
+    a-scene { position: fixed; inset: 0; }
     .a-enter-vr, .a-orientation-modal { display: none !important; }
 
     #status {
@@ -41,30 +22,46 @@
     #hud {
       position: fixed; bottom: 0; left: 0; right: 0;
       padding: 16px 16px 36px;
-      background: linear-gradient(to top, rgba(0,0,0,0.5), transparent);
+      background: linear-gradient(to top, rgba(0,0,0,0.45), transparent);
       text-align: center; z-index: 20; pointer-events: none;
       font-family: monospace; font-size: 11px;
       color: rgba(255,255,255,0.3); letter-spacing: 1px;
+    }
+
+    /* Gizli video — sadece texture kaynağı */
+    #camvid {
+      position: fixed; width: 1px; height: 1px;
+      opacity: 0; pointer-events: none; z-index: -1;
     }
   </style>
 </head>
 <body>
 
-<video id="cam" autoplay playsinline muted></video>
+<video id="camvid" autoplay playsinline muted></video>
 <div id="status">⏳ Başlatılıyor...</div>
 <div id="hud">sürükle = döndür</div>
 
 <a-scene
-  renderer="alpha: true; antialias: true; clearColor: transparent;"
-  background="color: transparent; transparent: true"
   embedded
   vr-mode-ui="enabled: false"
   loading-screen="enabled: false"
+  renderer="antialias: true"
 >
   <a-assets timeout="20000">
     <a-asset-item id="model" src="Test.glb"></a-asset-item>
+    <!-- Video texture olarak tanımlanacak, JS ile set edeceğiz -->
   </a-assets>
 
+  <!-- Kamera feed'ini gösteren arka plan düzlemi -->
+  <!-- position z=-10, büyük scale ile tüm ekranı kaplar -->
+  <a-plane
+    id="bg"
+    position="0 0 -10"
+    width="30" height="18"
+    material="shader: flat; src: #camtex; side: front"
+  ></a-plane>
+
+  <!-- 3D Model -->
   <a-entity
     id="obj"
     gltf-model="#model"
@@ -74,62 +71,74 @@
     animation="property: rotation; to: 0 360 0; loop: true; dur: 8000; easing: linear"
   ></a-entity>
 
-  <a-camera look-controls="enabled: false" wasd-controls="enabled: false"></a-camera>
+  <a-camera
+    id="cam"
+    look-controls="enabled: false"
+    wasd-controls="enabled: false"
+    fov="60"
+  ></a-camera>
 </a-scene>
 
 <script>
   const status = document.getElementById('status');
+  const vid    = document.getElementById('camvid');
+  const scene  = document.querySelector('a-scene');
 
-  // Kamera
+  // Kamerayı başlat
   function startCamera(simple) {
-    const constraints = simple
-      ? { video: true, audio: false }
-      : { video: { facingMode: 'environment' }, audio: false };
-
-    navigator.mediaDevices.getUserMedia(constraints)
+    const c = simple ? { video: true } : { video: { facingMode: 'environment' }, audio: false };
+    navigator.mediaDevices.getUserMedia(c)
       .then(stream => {
-        document.getElementById('cam').srcObject = stream;
-        status.textContent = '📷 Kamera açık';
+        vid.srcObject = stream;
+        vid.play();
+        status.textContent = '📷 Kamera açık — model yükleniyor...';
+        injectVideoTexture();
       })
       .catch(err => {
-        if (!simple) {
-          startCamera(true);
-        } else {
+        if (!simple) { startCamera(true); }
+        else {
           status.textContent = '❌ Kamera: ' + err.name;
           status.style.background = 'rgba(180,0,0,0.85)';
         }
       });
   }
-  startCamera(false);
 
-  // Canvas şeffaflığını JS ile de zorla
-  const scene = document.querySelector('a-scene');
+  // Video'yu A-Frame texture olarak enjekte et
+  function injectVideoTexture() {
+    function tryInject() {
+      // video hazır ve boyutu var mı?
+      if (vid.readyState < 2 || vid.videoWidth === 0) {
+        setTimeout(tryInject, 200);
+        return;
+      }
+
+      // Dinamik texture asset ekle
+      const assets = scene.querySelector('a-assets');
+      const videoAsset = document.createElement('video');
+      videoAsset.setAttribute('id', 'camtex');
+      videoAsset.setAttribute('autoplay', '');
+      videoAsset.setAttribute('playsinline', '');
+      videoAsset.setAttribute('muted', '');
+      videoAsset.srcObject = vid.srcObject;
+      videoAsset.play();
+      assets.appendChild(videoAsset);
+
+      // bg plane'e texture'ı bağla
+      const bg = document.getElementById('bg');
+      setTimeout(() => {
+        bg.setAttribute('material', 'shader: flat; src: #camtex');
+      }, 300);
+    }
+    tryInject();
+  }
+
+  // Scene yüklenince model takibi
   scene.addEventListener('loaded', () => {
-    // WebGL renderer alpha zorla
-    const renderer = scene.renderer;
-    if (renderer) {
-      renderer.setClearColor(0x000000, 0); // alpha=0
-      renderer.setPixelRatio(window.devicePixelRatio);
-    }
-
-    // Canvas element'ini de zorla
-    const canvas = scene.canvas;
-    if (canvas) {
-      canvas.style.cssText = `
-        position: fixed !important;
-        top: 0 !important; left: 0 !important;
-        width: 100% !important; height: 100% !important;
-        background: transparent !important;
-        z-index: 1 !important;
-      `;
-    }
-
-    // Model eventi
     const obj = document.getElementById('obj');
     obj.addEventListener('model-loaded', () => {
       status.textContent = '✅ Hazır';
-      status.style.background = 'rgba(0,120,0,0.7)';
-      setTimeout(() => { status.style.opacity = '0'; }, 2000);
+      status.style.background = 'rgba(0,130,0,0.7)';
+      setTimeout(() => { status.style.opacity = '0'; }, 2500);
     });
     obj.addEventListener('model-error', () => {
       status.textContent = '❌ Test.glb yüklenemedi';
@@ -137,16 +146,7 @@
     });
   });
 
-  // Her frame'de renderer'ı şeffaf tut
-  scene.addEventListener('loaded', () => {
-    scene.renderer.setClearAlpha(0);
-    // Render loop hook
-    const origRender = scene.renderer.render.bind(scene.renderer);
-    scene.renderer.render = function(...args) {
-      scene.renderer.setClearAlpha(0);
-      origRender(...args);
-    };
-  });
+  startCamera(false);
 
   // Döndürme
   const obj = document.getElementById('obj');
