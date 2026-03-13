@@ -344,8 +344,16 @@ function onXRFrame(timestamp, frame) {
   // Hit test source oluştur
   if (!hitTestSourceRequested) {
     session.requestReferenceSpace('viewer').then(refSpace => {
-      session.requestHitTestSource({ space: refSpace }).then(source => {
+      session.requestHitTestSource({
+        space: refSpace,
+        entityTypes: ['plane']   // sadece algılanan düzlemler (masa, zemin)
+      }).then(source => {
         hitTestSource = source;
+      }).catch(() => {
+        // plane desteklenmiyorsa fallback: tüm yüzeyler
+        session.requestHitTestSource({ space: refSpace }).then(s => {
+          hitTestSource = s;
+        });
       });
     });
     hitTestSourceRequested = true;
