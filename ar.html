@@ -237,6 +237,7 @@ let hitTestSource = null;
 let transientHitTestSource = null;
 let hitTestSourceRequested = false;
 let xrRefSpace = null;
+let placeCooldown = false;
 
 async function startAR() {
   // WebXR desteği kontrol
@@ -256,7 +257,11 @@ async function startAR() {
   try {
     xrSession = await navigator.xr.requestSession('immersive-ar', {
       requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay', 'light-estimation', 'plane-detection', 'anchors'],
+      optionalFeatures: ['dom-overlay', 'light-estimation', 'plane-detection', 'anchors', 'depth-sensing'],
+      depthSensing: {
+        usagePreference: ['cpu-optimized'],
+        dataFormatPreference: ['luminance-alpha', 'float32']
+      },
       domOverlay: { root: document.body }
     });
 
@@ -327,6 +332,8 @@ function placeModel() {
 
 function resetPlace() {
   placed = false;
+  placeCooldown = true;
+  setTimeout(() => { placeCooldown = false; }, 600); // buton tap'ı yerleştirmesin
   modelGroup.visible = false;
   modelGroup.rotation.set(0, 0, 0);
   modelGroup.scale.setScalar(1);
@@ -422,7 +429,7 @@ function onXRFrame(timestamp, frame) {
   }
 
   // Tap-to-place: transient input hit test sonuçları
-  if (transientHitTestSource && !placed) {
+  if (transientHitTestSource && !placed && !placeCooldown) {
     const tResults = frame.getHitTestResultsForTransientInput(transientHitTestSource);
     for (const r of tResults) {
       if (r.results.length > 0) {
