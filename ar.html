@@ -7,7 +7,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-    #bgCanvas  { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
+    #bgCanvas    { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; }
     #threeCanvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; }
     #startBtn {
       position: fixed; top: 50%; left: 50%;
@@ -22,7 +22,7 @@
       padding: 10px; text-align: center; z-index: 99;
       font-family: monospace; font-size: 12px;
       color: #fff; background: rgba(0,0,0,0.65);
-      transition: opacity 0.5s; display: none;
+      display: none;
     }
     #hint {
       position: fixed; bottom: 36px; left: 0; right: 0;
@@ -30,15 +30,24 @@
       font-family: monospace; font-size: 11px;
       color: rgba(255,255,255,0.35); letter-spacing: 1px;
     }
+    #gyroBtn {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 99; padding: 18px 36px;
+      background: #000; color: #fff; border: 2px solid #fff;
+      font-family: monospace; font-size: 14px; font-weight: bold;
+      border-radius: 12px; cursor: pointer; display: none;
+    }
   </style>
 </head>
 <body>
 
 <canvas id="bgCanvas"></canvas>
 <canvas id="threeCanvas"></canvas>
-<button id="startBtn" onclick="startCamera()">Kamerayı Başlat</button>
+<button id="startBtn" onclick="init()">Başlat</button>
+<button id="gyroBtn" onclick="requestGyro()">Jiroskop İzni Ver (iOS)</button>
 <div id="status"></div>
-<div id="hint">1 parmak = döndür · 2 parmak = zoom · 3 parmak = taşı</div>
+<div id="hint">telefonu hareket ettir · 2 parmak = zoom · 3 parmak = taşı</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -49,30 +58,24 @@ const threeCanvas = document.getElementById('threeCanvas');
 const bgCtx       = bgCanvas.getContext('2d');
 const statusEl    = document.getElementById('status');
 
-function showStatus(msg, color) {
+function showStatus(msg, color, autohide) {
   statusEl.style.display = 'block';
   statusEl.style.background = color || 'rgba(0,0,0,0.65)';
   statusEl.textContent = msg;
+  if (autohide) setTimeout(() => statusEl.style.display = 'none', autohide);
 }
 
-// ── Kamera ───────────────────────────────────────────────
+// ── Kamera feed ───────────────────────────────────────────
 const vid = document.createElement('video');
 vid.autoplay = true; vid.playsInline = true; vid.muted = true;
 
 function startCamera() {
-  document.getElementById('startBtn').style.display = 'none';
-  showStatus('📷 Kamera açılıyor...');
-
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
-    .then(s => { vid.srcObject = s; vid.play(); showStatus(''); setTimeout(() => statusEl.style.display='none', 1000); })
-    .catch(() => {
-      navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-        .then(s => { vid.srcObject = s; vid.play(); setTimeout(() => statusEl.style.display='none', 1000); })
-        .catch(e => showStatus('❌ Kamera: ' + e.name, 'rgba(160,0,0,0.85)'));
-    });
+  return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+    .then(s => { vid.srcObject = s; vid.play(); })
+    .catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      .then(s => { vid.srcObject = s; vid.play(); }));
 }
 
-// BG canvas — stretch-free
 (function drawBG() {
   requestAnimationFrame(drawBG);
   if (vid.readyState < 2) return;
@@ -90,21 +93,21 @@ renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputEncoding = THREE.sRGBEncoding;
-renderer.shadowMap.enabled = true;
 
 const scene  = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.01, 100);
-camera.position.set(0, 0, 3);
+
+// Kamera bir wrapper içinde — jiroskop bu wrapper'ı döndürür
+const cameraWrapper = new THREE.Group();
+cameraWrapper.add(camera);
+scene.add(cameraWrapper);
 
 // Işıklar
-scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+scene.add(new THREE.AmbientLight(0xffffff, 1.5));
 const key = new THREE.DirectionalLight(0xffffff, 2.0);
-key.position.set(3, 5, 3); key.castShadow = true;
-scene.add(key);
+key.position.set(3, 5, 3); scene.add(key);
 const fill = new THREE.DirectionalLight(0x8aaeff, 0.8);
 fill.position.set(-3, 0, 2); scene.add(fill);
-const rim = new THREE.DirectionalLight(0xffffff, 0.6);
-rim.position.set(0, -2, -3); scene.add(rim);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth/window.innerHeight;
@@ -112,111 +115,136 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// ── Jiroskop ─────────────────────────────────────────────
+let gyroEnabled = false;
+const deviceQuat = new THREE.Quaternion();
+const euler = new THREE.Euler();
+// Telefon yönünü Three.js koordinat sistemine çeviren sabit rotasyon
+const screenTransform = new THREE.Quaternion().setFromEuler(
+  new THREE.Euler(-Math.PI/2, 0, 0)
+);
+
+function onDeviceOrientation(e) {
+  if (e.alpha === null) return;
+  // ZXY euler → quaternion
+  euler.set(
+    THREE.MathUtils.degToRad(e.beta),
+    THREE.MathUtils.degToRad(e.alpha),
+    THREE.MathUtils.degToRad(-e.gamma),
+    'YXZ'
+  );
+  deviceQuat.setFromEuler(euler);
+  // Koordinat sistemini düzelt
+  cameraWrapper.quaternion.copy(deviceQuat).multiply(screenTransform);
+  gyroEnabled = true;
+}
+
+function requestGyro() {
+  document.getElementById('gyroBtn').style.display = 'none';
+  // iOS 13+ izin gerektirir
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission()
+      .then(state => {
+        if (state === 'granted') {
+          window.addEventListener('deviceorientation', onDeviceOrientation);
+          showStatus('✅ Jiroskop aktif', 'rgba(0,120,0,0.75)', 2000);
+        } else {
+          showStatus('❌ Jiroskop izni reddedildi', 'rgba(160,0,0,0.85)');
+        }
+      });
+  } else {
+    window.addEventListener('deviceorientation', onDeviceOrientation);
+    showStatus('✅ Jiroskop aktif', 'rgba(0,120,0,0.75)', 2000);
+  }
+}
+
 // ── Model ─────────────────────────────────────────────────
 let model = null, mixer = null;
-let modelPos   = new THREE.Vector3(0, 0, -2);
-let modelScale = 1.0;
-let rotX = 0, rotY = 0;
+// Model dünya koordinatında sabit bir noktada — kamera önünde başlasın
+const modelGroup = new THREE.Group();
+modelGroup.position.set(0, 0, -2); // dünya origin'den 2 birim önde
+scene.add(modelGroup);
 
 const loader = new THREE.GLTFLoader();
 loader.load(
   'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
   gltf => {
     model = gltf.scene;
-    const box    = new THREE.Box3().setFromObject(model);
-    const center = box.getCenter(new THREE.Vector3());
-    const size   = box.getSize(new THREE.Vector3());
-    const s      = 1.5 / Math.max(size.x, size.y, size.z);
+    const box  = new THREE.Box3().setFromObject(model);
+    const cent = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const s    = 1.5 / Math.max(size.x, size.y, size.z);
     model.scale.setScalar(s);
-    model.position.copy(center.multiplyScalar(-s));
-    modelScale = s;
-    scene.add(model);
+    model.position.copy(cent.multiplyScalar(-s));
+    modelGroup.add(model);
     if (gltf.animations.length > 0) {
       mixer = new THREE.AnimationMixer(model);
       gltf.animations.forEach(c => mixer.clipAction(c).play());
     }
-  },
-  null,
-  e => showStatus('❌ Model yüklenemedi: ' + e.message, 'rgba(160,0,0,0.85)')
+    showStatus('✅ Hazır — telefonu hareket ettir', 'rgba(0,120,0,0.75)', 3000);
+  }
 );
 
-// ── Touch kontrolleri ────────────────────────────────────
-// 1 parmak = XY rotasyon
-// 2 parmak = pinch zoom
-// 3 parmak = pozisyon taşı (XY)
-
-let touches = [];
-let lastTouches = [];
-
-// Pinch
-let pinchStartDist  = 0;
-let pinchStartScale = 1.0;
-
-// Drag (1 parmak)
-let dragStartX = 0, dragStartY = 0;
-let dragStartRotX = 0, dragStartRotY = 0;
-
-// Taşı (3 parmak)
-let moveStartX = 0, moveStartY = 0;
+// ── Touch: zoom (2 parmak) + taşı (3 parmak) + döndür (1 parmak) ──
+let pinchStartDist = 0, pinchStartScale = 1.5;
+let curScale = 1.5;
+let moveStart = null;
 let moveStartPos = new THREE.Vector3();
-
-function getTouchCenter(ts) {
-  let cx = 0, cy = 0;
-  for (let t of ts) { cx += t.clientX; cy += t.clientY; }
-  return { x: cx/ts.length, y: cy/ts.length };
-}
+let dragStart = null;
+let dragStartRot = new THREE.Euler();
 
 function getPinchDist(ts) {
   const dx = ts[0].clientX - ts[1].clientX;
   const dy = ts[0].clientY - ts[1].clientY;
   return Math.sqrt(dx*dx + dy*dy);
 }
+function getTouchCenter(ts) {
+  return { x: (ts[0].clientX+ts[1].clientX)/2, y: (ts[0].clientY+ts[1].clientY)/2 };
+}
 
 threeCanvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  touches = Array.from(e.touches);
-
-  if (touches.length === 1) {
-    dragStartX = touches[0].clientX;
-    dragStartY = touches[0].clientY;
-    dragStartRotX = rotX;
-    dragStartRotY = rotY;
-  } else if (touches.length === 2) {
-    pinchStartDist  = getPinchDist(touches);
-    pinchStartScale = modelScale;
-  } else if (touches.length === 3) {
-    const c = getTouchCenter(touches);
-    moveStartX = c.x; moveStartY = c.y;
-    moveStartPos.copy(modelPos);
+  const ts = Array.from(e.touches);
+  if (ts.length === 1) {
+    dragStart = { x: ts[0].clientX, y: ts[0].clientY };
+    dragStartRot.copy(modelGroup.rotation);
+  } else if (ts.length === 2) {
+    pinchStartDist  = getPinchDist(ts);
+    pinchStartScale = curScale;
+    dragStart = null;
+  } else if (ts.length === 3) {
+    const cx = (ts[0].clientX + ts[1].clientX + ts[2].clientX) / 3;
+    const cy = (ts[0].clientY + ts[1].clientY + ts[2].clientY) / 3;
+    moveStart = { x: cx, y: cy };
+    moveStartPos.copy(modelGroup.position);
+    dragStart = null;
   }
 }, { passive: false });
 
 threeCanvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  touches = Array.from(e.touches);
-
   if (!model) return;
+  const ts = Array.from(e.touches);
 
-  if (touches.length === 1) {
-    // Döndür
-    const dx = touches[0].clientX - dragStartX;
-    const dy = touches[0].clientY - dragStartY;
-    rotY = dragStartRotY + dx * 0.008;
-    rotX = dragStartRotX + dy * 0.008;
-    rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
+  if (ts.length === 1 && dragStart) {
+    const dx = ts[0].clientX - dragStart.x;
+    const dy = ts[0].clientY - dragStart.y;
+    modelGroup.rotation.y = dragStartRot.y + dx * 0.008;
+    modelGroup.rotation.x = dragStartRot.x + dy * 0.008;
+    modelGroup.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, modelGroup.rotation.x));
 
-  } else if (touches.length === 2) {
-    // Zoom
-    const newDist = getPinchDist(touches);
-    modelScale = Math.max(0.1, Math.min(8, pinchStartScale * (newDist / pinchStartDist)));
-    model.scale.setScalar(modelScale);
+  } else if (ts.length === 2) {
+    const newDist = getPinchDist(ts);
+    curScale = Math.max(0.2, Math.min(10, pinchStartScale * (newDist / pinchStartDist)));
+    modelGroup.scale.setScalar(curScale / 1.5);
 
-  } else if (touches.length === 3) {
-    // Taşı
-    const c = getTouchCenter(touches);
-    const dx = (c.x - moveStartX) / window.innerWidth  *  4;
-    const dy = (c.y - moveStartY) / window.innerHeight * -4;
-    modelPos.set(
+  } else if (ts.length === 3 && moveStart) {
+    const cx = (ts[0].clientX + ts[1].clientX + ts[2].clientX) / 3;
+    const cy = (ts[0].clientY + ts[1].clientY + ts[2].clientY) / 3;
+    const dx = (cx - moveStart.x) / window.innerWidth  * 4;
+    const dy = (cy - moveStart.y) / window.innerHeight * -4;
+    modelGroup.position.set(
       moveStartPos.x + dx,
       moveStartPos.y + dy,
       moveStartPos.z
@@ -225,52 +253,34 @@ threeCanvas.addEventListener('touchmove', e => {
 }, { passive: false });
 
 threeCanvas.addEventListener('touchend', e => {
-  touches = Array.from(e.touches);
-  // Yeni başlangıç noktalarını güncelle
-  if (touches.length === 1) {
-    dragStartX = touches[0].clientX;
-    dragStartY = touches[0].clientY;
-    dragStartRotX = rotX;
-    dragStartRotY = rotY;
-  }
+  const ts = Array.from(e.touches);
+  if (ts.length === 0) { dragStart = null; moveStart = null; }
 }, { passive: false });
 
-// ── Render loop ───────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────
+async function init() {
+  document.getElementById('startBtn').style.display = 'none';
+  showStatus('📷 Başlatılıyor...');
+
+  await startCamera().catch(e => showStatus('❌ Kamera: ' + e.name, 'rgba(160,0,0,0.85)'));
+
+  // iOS mu?
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  if (isIOS && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    document.getElementById('gyroBtn').style.display = 'block';
+    showStatus('iOS: Jiroskop için izin gerekiyor', 'rgba(0,0,0,0.75)');
+  } else {
+    // Android veya desktop — direkt başlat
+    window.addEventListener('deviceorientation', onDeviceOrientation);
+    showStatus('✅ Kamera açık', 'rgba(0,120,0,0.75)', 2000);
+  }
+}
+
+// ── Render ────────────────────────────────────────────────
 const clock = new THREE.Clock();
 (function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
-  if (model) {
-    model.rotation.x = rotX;
-    model.rotation.y = rotY;
-    // Modelin dünya pozisyonunu güncelle
-    // model.position zaten normalize edilmiş, grup pozisyonu kullanalım
-    model.parent && model.parent !== scene
-      ? model.parent.position.copy(modelPos)
-      : (() => {
-          // model direkt scene'de, position offset'i uygula
-          const box = new THREE.Box3().setFromObject(model);
-          const center = box.getCenter(new THREE.Vector3());
-          // modelPos'u camera space'den world space'e çevir
-          const worldPos = modelPos.clone();
-          worldPos.applyMatrix4(camera.matrixWorld);
-          model.position.set(
-            model.position.x + modelPos.x,
-            model.position.y + modelPos.y,
-            model.position.z
-          );
-        })();
-
-    // Gruplanmış pozisyon için wrapper kullan
-    if (!model.userData.wrapper) {
-      const wrapper = new THREE.Group();
-      scene.remove(model);
-      wrapper.add(model);
-      scene.add(wrapper);
-      model.userData.wrapper = wrapper;
-    }
-    model.userData.wrapper.position.copy(modelPos);
-  }
   if (mixer) mixer.update(dt);
   renderer.render(scene, camera);
 })();
