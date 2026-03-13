@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>WebAR Experience</title>
+
+  <!-- A-Frame + AR.js -->
+  <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body { overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+
+    /* Loading screen */
+    #loading {
+      position: fixed; inset: 0; z-index: 9999;
+      background: #0a0a0a;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 20px;
+    }
+    #loading .logo {
+      font-size: 13px; letter-spacing: 6px; text-transform: uppercase;
+      color: #555; margin-bottom: 8px;
+    }
+    #loading .title {
+      font-size: 28px; font-weight: 700; color: #fff;
+      letter-spacing: -0.5px;
+    }
+    #loading .bar-wrap {
+      width: 200px; height: 2px; background: #222; border-radius: 2px; overflow: hidden;
+    }
+    #loading .bar {
+      height: 100%; width: 0%; background: #fff;
+      animation: load 2s ease forwards;
+    }
+    @keyframes load { to { width: 100%; } }
+    #loading .hint {
+      font-size: 13px; color: #444; text-align: center; max-width: 260px; line-height: 1.6;
+    }
+
+    /* HUD overlay */
+    #hud {
+      position: fixed; inset: 0; z-index: 100;
+      pointer-events: none;
+      display: none;
+    }
+    #hud .top-bar {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 20px 24px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    #hud .badge {
+      font-size: 10px; letter-spacing: 4px; text-transform: uppercase;
+      color: rgba(255,255,255,0.5); font-weight: 500;
+    }
+    #hud .rec {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 11px; color: rgba(255,255,255,0.4); letter-spacing: 2px;
+    }
+    #hud .rec-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: #ff3b30;
+      animation: pulse 1.5s ease infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    #hud .bottom-bar {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      padding: 28px 24px 40px;
+      background: linear-gradient(to top, rgba(0,0,0,0.65), transparent);
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    #hud .scan-label {
+      font-size: 13px; color: rgba(255,255,255,0.55); letter-spacing: 1px;
+    }
+    #hud .found-label {
+      font-size: 13px; color: #4cd964; letter-spacing: 1px;
+      display: none;
+    }
+
+    /* Corner brackets */
+    #hud .corners {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .frame {
+      width: 220px; height: 220px; position: relative;
+    }
+    .frame::before, .frame::after,
+    .frame .inner::before, .frame .inner::after {
+      content: ''; position: absolute;
+      width: 28px; height: 28px; border-color: rgba(255,255,255,0.7);
+      border-style: solid;
+    }
+    .frame::before { top: 0; left: 0; border-width: 2px 0 0 2px; }
+    .frame::after  { top: 0; right: 0; border-width: 2px 2px 0 0; }
+    .frame .inner::before { bottom: 0; left: 0; border-width: 0 0 2px 2px; }
+    .frame .inner::after  { bottom: 0; right: 0; border-width: 0 2px 2px 0; }
+
+    /* A-Frame canvas fill */
+    a-scene canvas { width: 100% !important; height: 100% !important; }
+  </style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loading">
+  <div class="logo">WebAR</div>
+  <div class="title">Kamera Başlatılıyor</div>
+  <div class="bar-wrap"><div class="bar"></div></div>
+  <div class="hint">Hiro marker'ı kameraya göster ve modelin canlanmasını izle</div>
+</div>
+
+<!-- HUD -->
+<div id="hud">
+  <div class="top-bar">
+    <span class="badge">AR · Live</span>
+    <span class="rec"><span class="rec-dot"></span>ACTIVE</span>
+  </div>
+  <div class="corners">
+    <div class="frame"><div class="inner"></div></div>
+  </div>
+  <div class="bottom-bar">
+    <span class="scan-label" id="scanLabel">Hiro marker'ı çerçeveye hizala</span>
+    <span class="found-label" id="foundLabel">✓ Marker algılandı</span>
+  </div>
+</div>
+
+<!-- AR Scene -->
+<a-scene
+  id="arScene"
+  embedded
+  arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+  renderer="logarithmicDepthBuffer: true; antialias: true;"
+  vr-mode-ui="enabled: false"
+  loading-screen="enabled: false"
+>
+
+  <a-assets>
+    <!-- ============================================================
+         BURAYA KENDİ MODELİNİN YOLUNU YAZ
+         Aynı klasördeki model için:  src="model.glb"
+         CDN veya hosting için:       src="https://..."
+         ============================================================ -->
+    <a-asset-item id="myModel" src="model.glb"></a-asset-item>
+  </a-assets>
+
+  <a-marker
+    id="hiroMarker"
+    preset="hiro"
+    smooth="true"
+    smoothCount="10"
+    smoothTolerance="0.01"
+    smoothThreshold="5"
+  >
+    <!-- Model entity — scale ve position'ı ihtiyaca göre ayarla -->
+    <a-entity
+      gltf-model="#myModel"
+      scale="0.15 0.15 0.15"
+      position="0 0 0"
+      rotation="0 0 0"
+      animation-mixer
+    ></a-entity>
+  </a-marker>
+
+  <a-entity camera></a-entity>
+</a-scene>
+
+<script>
+  // Show HUD after scene loads
+  const scene = document.getElementById('arScene');
+  scene.addEventListener('loaded', () => {
+    setTimeout(() => {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('hud').style.display = 'block';
+    }, 2200);
+  });
+
+  // Marker found/lost feedback
+  const marker = document.getElementById('hiroMarker');
+  const scanLabel  = document.getElementById('scanLabel');
+  const foundLabel = document.getElementById('foundLabel');
+
+  marker.addEventListener('markerFound', () => {
+    scanLabel.style.display  = 'none';
+    foundLabel.style.display = 'block';
+  });
+  marker.addEventListener('markerLost', () => {
+    scanLabel.style.display  = 'block';
+    foundLabel.style.display = 'none';
+  });
+</script>
+</body>
+</html>
