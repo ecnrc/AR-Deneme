@@ -8,21 +8,23 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; }
-
     #cam {
       position: fixed; inset: 0;
       width: 100%; height: 100%;
       object-fit: cover;
       z-index: 0;
     }
-
     a-scene {
       position: fixed; inset: 0;
       z-index: 1;
-      background: transparent !important;
     }
-    a-scene canvas { background: transparent !important; }
-
+    #status {
+      position: fixed; top: 60px; left: 0; right: 0;
+      text-align: center; z-index: 20;
+      font-family: monospace; font-size: 13px;
+      color: #fff; background: rgba(0,0,0,0.6);
+      padding: 8px;
+    }
     #hud {
       position: fixed; inset: 0; z-index: 10;
       pointer-events: none;
@@ -33,69 +35,50 @@
       background: linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
       display: flex; justify-content: space-between; align-items: center;
     }
-    .badge {
-      font-family: monospace; font-size: 11px;
-      letter-spacing: 3px; color: rgba(255,255,255,0.45);
-      text-transform: uppercase;
-    }
-    .dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: #4cd964;
-      animation: blink 2s ease infinite;
-    }
+    .badge { font-family: monospace; font-size: 11px; letter-spacing: 3px; color: rgba(255,255,255,0.45); text-transform: uppercase; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #4cd964; animation: blink 2s ease infinite; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
-
-    #hud .bottom {
-      position: absolute; bottom: 0; left: 0; right: 0;
-      padding: 20px 20px 36px;
-      background: linear-gradient(to top, rgba(0,0,0,0.5), transparent);
-      text-align: center;
-      font-family: monospace; font-size: 12px;
-      color: rgba(255,255,255,0.4); letter-spacing: 1px;
-    }
-
-    #hint {
-      position: fixed; bottom: 80px; left: 50%;
-      transform: translateX(-50%);
-      z-index: 11;
-      font-family: monospace; font-size: 12px;
-      color: rgba(255,255,255,0.35);
-      letter-spacing: 1px;
-      pointer-events: none;
-      animation: fadeout 3s ease 3s forwards;
-    }
-    @keyframes fadeout { to { opacity: 0; } }
   </style>
 </head>
 <body>
 
 <video id="cam" autoplay playsinline muted></video>
-
+<div id="status">⏳ Model yükleniyor...</div>
 <div id="hud">
   <div class="top">
-    <span class="badge">AR · Live</span>
+    <span class="badge">AR · Debug</span>
     <span class="dot"></span>
   </div>
-  <div class="bottom">ecnrc · AR Deneme</div>
 </div>
-<div id="hint">Modeli döndürmek için sürükle</div>
 
 <a-scene
   renderer="alpha: true; antialias: true;"
+  background="color: transparent"
   embedded
   vr-mode-ui="enabled: false"
   loading-screen="enabled: false"
 >
   <a-assets>
-    <a-asset-item id="model" src="Test.glb"></a-asset-item>
+    <a-asset-item id="model" src="Test.glb"
+      onload="document.getElementById('status').textContent='✅ Model yüklendi'"
+      onerror="document.getElementById('status').textContent='❌ Test.glb yüklenemedi!'; document.getElementById('status').style.background='rgba(200,0,0,0.8)'"
+    ></a-asset-item>
   </a-assets>
 
+  <!-- Test kutusu — 3D katman çalışıyor mu? -->
+  <a-box
+    position="0 0 -2"
+    width="0.4" height="0.4" depth="0.4"
+    color="#ff3b30"
+    animation="property: rotation; to: 0 360 0; loop: true; dur: 3000; easing: linear"
+  ></a-box>
+
+  <!-- Asıl model -->
   <a-entity
     id="obj"
     gltf-model="#model"
     position="0 -0.5 -2"
     scale="0.4 0.4 0.4"
-    rotation="0 0 0"
     animation-mixer
     animation="property: rotation; to: 0 360 0; loop: true; dur: 8000; easing: linear"
   ></a-entity>
@@ -110,18 +93,16 @@
   }).then(stream => {
     document.getElementById('cam').srcObject = stream;
   }).catch(err => {
-    console.warn('Kamera açılamadı:', err);
+    document.getElementById('status').textContent = '❌ Kamera: ' + err.message;
   });
 
   const obj = document.getElementById('obj');
   let startX = 0, startRot = 0;
-
   document.addEventListener('touchstart', e => {
     startX   = e.touches[0].clientX;
     startRot = obj.getAttribute('rotation').y;
     obj.removeAttribute('animation');
   });
-
   document.addEventListener('touchmove', e => {
     e.preventDefault();
     const delta = e.touches[0].clientX - startX;
