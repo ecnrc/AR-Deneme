@@ -11,22 +11,22 @@
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
     .a-enter-vr, .a-orientation-modal { display: none !important; }
 
-    #log {
+    #status {
       position: fixed; top: 0; left: 0; right: 0;
-      z-index: 9999;
+      padding: 10px; text-align: center; z-index: 9999;
       font-family: monospace; font-size: 12px;
-      color: #fff;
-      max-height: 50vh; overflow-y: auto;
+      color: #fff; background: rgba(0,0,0,0.75);
     }
-    .line {
-      padding: 6px 10px;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
+    #startBtn {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 9999;
+      padding: 16px 32px;
+      background: #fff; color: #000;
+      font-family: monospace; font-size: 16px; font-weight: bold;
+      border: none; border-radius: 12px; cursor: pointer;
+      display: none;
     }
-    .ok   { background: rgba(0,120,0,0.85); }
-    .err  { background: rgba(180,0,0,0.85); }
-    .info { background: rgba(0,0,0,0.75); }
-    .warn { background: rgba(150,100,0,0.85); }
-
     #scanTxt {
       position: fixed; bottom: 40px; left: 0; right: 0;
       text-align: center; z-index: 20;
@@ -38,12 +38,13 @@
 </head>
 <body>
 
-<div id="log"></div>
+<div id="status">⏳ Yükleniyor...</div>
+<button id="startBtn" onclick="startAR()">Kamerayı Başlat</button>
 <div id="scanTxt">Sigara paketini kameraya göster</div>
 
 <a-scene
   id="scene"
-  mindar-image="imageTargetSrc: targets.mind; autoStart: true; uiLoading: no; uiError: no; uiScanning: no;"
+  mindar-image="imageTargetSrc: targets.mind; autoStart: false; uiLoading: no; uiError: no; uiScanning: no; filterMinCF: 0.001; filterBeta: 1000;"
   color-space="sRGB"
   renderer="colorManagement: true;"
   vr-mode-ui="enabled: false"
@@ -66,61 +67,77 @@
 </a-scene>
 
 <script>
-  const logEl = document.getElementById('log');
+  const status  = document.getElementById('status');
+  const btn     = document.getElementById('startBtn');
+  const scanTxt = document.getElementById('scanTxt');
+  const scene   = document.getElementById('scene');
 
-  function log(msg, type='info') {
-    const d = document.createElement('div');
-    d.className = 'line ' + type;
-    d.textContent = msg;
-    logEl.prepend(d);
+  function log(msg) {
+    status.textContent = msg;
     console.log(msg);
   }
 
-  log('Sayfa yüklendi', 'info');
+  // A-Frame yüklenince butonu göster
+  scene.addEventListener('loaded', () => {
+    log('✅ Hazır — başlatmak için butona bas');
+    btn.style.display = 'block';
+  });
 
-  // HTTPS kontrolü
-  if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-    log('❌ HTTPS değil! Kamera açılmaz.', 'err');
-  } else {
-    log('✅ HTTPS OK: ' + location.origin, 'ok');
+  async function startAR() {
+    btn.style.display = 'none';
+    log('📷 Kamera izni isteniyor...');
+
+    try {
+      // Önce izni al
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false
+      });
+      // İzni aldık, akışı kapat — MindAR kendi açacak
+      stream.getTracks().forEach(t => t.stop());
+      log('✅ İzin alındı — AR başlatılıyor...');
+    } catch(e) {
+      try {
+        // Arka kamera yoksa ön kamera dene
+        const stream2 = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        stream2.getTracks().forEach(t => t.stop());
+        log('✅ İzin alındı (ön kamera) — AR başlatılıyor...');
+      } catch(e2) {
+        log('❌ Kamera izni reddedildi: ' + e2.name);
+        btn.style.display = 'block';
+        return;
+      }
+    }
+
+    // MindAR'ı başlat
+    const mindarSystem = scene.systems['mindar-image-system'];
+    if (mindarSystem) {
+      try {
+        await mindarSystem.start();
+        log('🎯 AR aktif — paketi göster');
+        scanTxt.style.display = 'block';
+        setTimeout(() => { status.style.display = 'none'; }, 2000);
+      } catch(e) {
+        log('❌ MindAR başlatılamadı: ' + (e.message || e));
+        btn.style.display = 'block';
+      }
+    } else {
+      log('❌ MindAR system bulunamadı');
+    }
   }
 
-  // targets.mind erişilebilir mi?
-  fetch('targets.mind', { method: 'HEAD' })
-    .then(r => {
-      if (r.ok) log('✅ targets.mind bulundu (HTTP ' + r.status + ')', 'ok');
-      else      log('❌ targets.mind HTTP ' + r.status, 'err');
-    })
-    .catch(e => log('❌ targets.mind fetch hatası: ' + e.message, 'err'));
-
-  // Kamera izni
-  navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-    .then(s => {
-      s.getTracks().forEach(t => t.stop()); // sadece test, MindAR kendi açacak
-      log('✅ Kamera izni tamam', 'ok');
-    })
-    .catch(e => log('❌ Kamera izni: ' + e.name + ' — ' + e.message, 'err'));
-
-  // A-Frame / MindAR olayları
-  const scene = document.getElementById('scene');
-
-  scene.addEventListener('loaded', () => log('✅ A-Frame scene loaded', 'ok'));
-  scene.addEventListener('arReady', () => {
-    log('✅ MindAR hazır — paketi göster', 'ok');
-    document.getElementById('scanTxt').style.display = 'block';
-  });
-  scene.addEventListener('arError', e => log('❌ MindAR hata: ' + JSON.stringify(e.detail), 'err'));
-
+  // Target olayları
   const target = document.querySelector('[mindar-image-target]');
-  target.addEventListener('targetFound', () => log('🎯 Paket algılandı!', 'ok'));
-  target.addEventListener('targetLost',  () => log('👁 Paket kayboldu', 'warn'));
+  target.addEventListener('targetFound', () => {
+    log('🎯 Paket algılandı!');
+    setTimeout(() => { status.style.display = 'none'; }, 1500);
+  });
+  target.addEventListener('targetLost', () => {
+    status.style.display = 'block';
+    log('👁 Paketi göster...');
+  });
 
-  // Model
-  const obj = document.querySelector('[gltf-model]');
-  obj.addEventListener('model-loaded', () => log('✅ Model yüklendi', 'ok'));
-  obj.addEventListener('model-error',  () => log('❌ Model yüklenemedi', 'err'));
-
-  window.addEventListener('error', e => log('❌ JS Hata: ' + e.message, 'err'));
+  window.addEventListener('error', e => log('❌ ' + e.message));
 </script>
 </body>
 </html>
