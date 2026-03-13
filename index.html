@@ -1,23 +1,262 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>WebAR — QR Kodunu Al</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;700;800&display=swap');
 
-<script type="module"
-src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+    :root {
+      --bg: #0d0d0d;
+      --surface: #141414;
+      --border: #232323;
+      --accent: #e8ff47;
+      --text: #f0f0f0;
+      --muted: #555;
+    }
 
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 40px 24px;
+    }
+
+    /* Noise grain overlay */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: 0; opacity: 0.4;
+    }
+
+    .container {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 480px;
+      display: flex; flex-direction: column; gap: 0;
+    }
+
+    header {
+      margin-bottom: 40px;
+    }
+    .eyebrow {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px; letter-spacing: 4px; color: var(--muted);
+      text-transform: uppercase; margin-bottom: 12px;
+    }
+    h1 {
+      font-size: clamp(36px, 9vw, 52px);
+      font-weight: 800; line-height: 1;
+      letter-spacing: -1px;
+    }
+    h1 span { color: var(--accent); }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      margin-bottom: 16px;
+    }
+
+    .card-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px; letter-spacing: 3px; color: var(--muted);
+      text-transform: uppercase; margin-bottom: 14px;
+    }
+
+    .input-row {
+      display: flex; gap: 10px;
+    }
+    input[type="text"] {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-family: 'DM Mono', monospace;
+      font-size: 13px; color: var(--text);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus { border-color: var(--accent); }
+    input[type="text"]::placeholder { color: var(--muted); }
+
+    button {
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-family: 'Syne', sans-serif;
+      font-weight: 700; font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+
+    /* QR output */
+    #qr-area { display: none; }
+    #qr-area .qr-box {
+      display: flex; justify-content: center;
+      margin-bottom: 20px;
+    }
+    #qrcode {
+      background: #fff;
+      padding: 16px; border-radius: 12px;
+      display: inline-block;
+    }
+    #qrcode canvas, #qrcode img { display: block; }
+
+    #qr-area .url-display {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px; color: var(--muted);
+      word-break: break-all; text-align: center;
+      padding: 10px 16px;
+      background: var(--bg);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    /* Steps */
+    .steps {
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .step {
+      display: flex; gap: 14px; align-items: flex-start;
+    }
+    .step-num {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px; color: var(--accent);
+      background: rgba(232,255,71,0.08);
+      border: 1px solid rgba(232,255,71,0.2);
+      border-radius: 6px;
+      width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 2px;
+    }
+    .step-text {
+      font-size: 14px; color: #aaa; line-height: 1.5;
+    }
+    .step-text strong { color: var(--text); }
+
+    .hiro-hint {
+      margin-top: 14px;
+      padding: 14px 16px;
+      background: rgba(232,255,71,0.04);
+      border: 1px solid rgba(232,255,71,0.12);
+      border-radius: 10px;
+      font-size: 13px; color: #888; line-height: 1.5;
+    }
+    .hiro-hint a {
+      color: var(--accent); text-decoration: none;
+    }
+    .hiro-hint a:hover { text-decoration: underline; }
+
+    footer {
+      margin-top: 32px;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px; color: var(--muted);
+      letter-spacing: 1px; text-align: center;
+    }
+  </style>
 </head>
+<body>
+<div class="container">
 
-<body style="margin:0">
+  <header>
+    <div class="eyebrow">WebAR · Marker Tabanlı</div>
+    <h1>QR Kodunu<br><span>Al &amp; Tut</span></h1>
+  </header>
 
-<model-viewer
-src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
-ar
-ar-modes="scene-viewer webxr quick-look"
-camera-controls
-style="width:100vw;height:100vh;">
-</model-viewer>
+  <!-- URL input -->
+  <div class="card">
+    <div class="card-label">01 — Deployed URL'ini gir</div>
+    <div class="input-row">
+      <input type="text" id="urlInput" placeholder="https://kullaniciadın.github.io/ar" />
+      <button onclick="generateQR()">QR Oluştur</button>
+    </div>
+  </div>
 
+  <!-- QR output -->
+  <div class="card" id="qr-area">
+    <div class="card-label">02 — QR Kodun</div>
+    <div class="qr-box">
+      <div id="qrcode"></div>
+    </div>
+    <div class="url-display" id="urlDisplay"></div>
+  </div>
+
+  <!-- Steps -->
+  <div class="card">
+    <div class="card-label">Nasıl çalışır?</div>
+    <div class="steps">
+      <div class="step">
+        <span class="step-num">1</span>
+        <span class="step-text"><strong>GitHub Pages'e yükle</strong> — ar.html ve model.glb'yi aynı repo'ya koy, Pages'i etkinleştir.</span>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span>
+        <span class="step-text"><strong>QR oluştur</strong> — Yukarıya URL'ini gir, QR'ı kaydet veya yazdır.</span>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span>
+        <span class="step-text"><strong>Hiro marker'ı yazdır</strong> — Kameraya tutarsın, model marker üzerinde belirir.</span>
+      </div>
+      <div class="step">
+        <span class="step-num">4</span>
+        <span class="step-text"><strong>Kamera izni ver</strong> — iOS Safari ve Android Chrome'da otomatik sorar.</span>
+      </div>
+    </div>
+    <div class="hiro-hint">
+      Hiro marker'ı indirmek için:
+      <a href="https://raw.githack.com/AR-js-org/AR.js/master/data/images/hiro.png" target="_blank">hiro.png →</a>
+      &nbsp;|&nbsp; Alternatif:
+      <a href="https://jeromeetienne.github.io/AR.js/data/images/hiro.png" target="_blank">yedek link →</a>
+    </div>
+  </div>
+
+  <footer>HTTPS zorunlu — HTTP'de kamera açılmaz</footer>
+
+</div>
+
+<script>
+  let qrInstance = null;
+
+  function generateQR() {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) return;
+
+    const area = document.getElementById('qr-area');
+    const box  = document.getElementById('qrcode');
+    const disp = document.getElementById('urlDisplay');
+
+    area.style.display = 'block';
+    box.innerHTML = '';
+    disp.textContent = url;
+
+    qrInstance = new QRCode(box, {
+      text: url,
+      width: 220,
+      height: 220,
+      colorDark: '#000000',
+      colorLight: '#ffffff',
+      correctLevel: QRCode.CorrectLevel.H
+    });
+  }
+
+  // Enter key support
+  document.getElementById('urlInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') generateQR();
+  });
+</script>
 </body>
 </html>
